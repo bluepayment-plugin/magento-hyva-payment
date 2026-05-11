@@ -1,0 +1,2261 @@
+<?php
+
+declare(strict_types=1);
+
+use Hyva\Theme\Model\ViewModelRegistry;
+use Hyva\Theme\ViewModel\HyvaCsp;
+use Magento\Framework\Escaper;
+use Magento\Framework\View\Element\Template;
+
+/** @var Template $block */
+/** @var Escaper $escaper */
+/** @var ViewModelRegistry $viewModels */
+
+$hyvaCsp = $viewModels->require(HyvaCsp::class);
+?>
+<script>
+    (() => {
+        const isBluepaymentMethodCode = (code) => code === 'bluepayment' || String(code || '').startsWith('bluepayment_');
+
+        const loadScript = (src) => {
+            const existing = document.querySelector(`script[src="${src}"]`);
+
+            if (existing) {
+                if (existing.dataset.loaded === 'true') {
+                    return Promise.resolve();
+                }
+
+                return new Promise((resolve, reject) => {
+                    existing.addEventListener('load', () => resolve(), { once: true });
+                    existing.addEventListener('error', () => reject(new Error(`Unable to load ${src}`)), { once: true });
+                });
+            }
+
+            return new Promise((resolve, reject) => {
+                const script = document.createElement('script');
+                script.src = src;
+                script.async = true;
+                script.addEventListener('load', () => {
+                    script.dataset.loaded = 'true';
+                    resolve();
+                }, { once: true });
+                script.addEventListener('error', () => reject(new Error(`Unable to load ${src}`)), { once: true });
+                document.head.appendChild(script);
+            });
+        };
+
+        const buildUrl = (baseUrl, params = {}) => {
+            const url = new URL(baseUrl, window.location.origin);
+
+            Object.entries(params).forEach(([key, value]) => {
+                if (value !== null && value !== undefined && value !== '') {
+                    url.searchParams.set(key, String(value));
+                }
+            });
+
+            return url.toString();
+        };
+
+        const hasOwn = (value, key) => Object.prototype.hasOwnProperty.call(value || {}, key);
+
+        const fetchJson = async (url, options = {}) => {
+            const response = await fetch(url, Object.assign({
+                headers: {
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                credentials: 'same-origin'
+            }, options));
+
+            if (!response.ok) {
+                throw new Error(`Request failed with status ${response.status}`);
+            }
+
+            return response.json();
+        };
+
+        const postJson = async (url, payload = {}) => {
+            const formData = new URLSearchParams();
+            Object.entries(payload).forEach(([key, value]) => {
+                if (value !== null && value !== undefined) {
+                    formData.append(key, String(value));
+                }
+            });
+
+            formData.append('form_key', window.FORM_KEY || '');
+
+            return fetchJson(url, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: formData.toString()
+            });
+        };
+
+        const waitForOrderPlacement = () => new Promise((resolve) => {
+            let resolved = false;
+
+            const finalize = (result) => {
+                if (resolved) {
+                    return;
+                }
+
+                resolved = true;
+                clearTimeout(timeoutId);
+                window.removeEventListener('order:place:success', successHandler);
+                window.removeEventListener('order:place:error', errorHandler);
+                resolve(result);
+            };
+
+            const successHandler = () => finalize(true);
+            const errorHandler = () => finalize(false);
+            const timeoutId = window.setTimeout(() => finalize(false), 30000);
+
+            window.addEventListener('order:place:success', successHandler, { once: true });
+            window.addEventListener('order:place:error', errorHandler, { once: true });
+        });
+
+        const createBluepaymentRetryState = () => ({
+            orderPlaced: false,
+            retryMode: false,
+            paymentInProgress: false,
+            activeMethodCode: null,
+            pollTimerId: null,
+            blikTimeoutId: null,
+            blikConfirmationVisible: false,
+            paymentAttemptId: null,
+            suppressEmptyCartDialog: false
+        });
+
+        const getBluepaymentRetryState = () => {
+            window.bluepaymentHyvaRetryState = window.bluepaymentHyvaRetryState || createBluepaymentRetryState();
+
+            return window.bluepaymentHyvaRetryState;
+        };
+
+        const getBluepaymentUiStateStore = () => {
+            window.bluepaymentHyvaUiState = window.bluepaymentHyvaUiState || {};
+
+            return window.bluepaymentHyvaUiState;
+        };
+
+        const getBluepaymentUiState = (methodCode) => {
+            if (!isBluepaymentMethodCode(methodCode)) {
+                return {};
+            }
+
+            const store = getBluepaymentUiStateStore();
+            store[methodCode] = store[methodCode] || {};
+
+            return store[methodCode];
+        };
+
+        const setBluepaymentUiState = (methodCode, values = {}) => {
+            if (!isBluepaymentMethodCode(methodCode) || typeof values !== 'object' || values === null) {
+                return {};
+            }
+
+            const store = getBluepaymentUiStateStore();
+            store[methodCode] = Object.assign({}, store[methodCode] || {}, values);
+
+            return store[methodCode];
+        };
+
+        const getBluepaymentRetryStateSnapshot = () => {
+            const state = getBluepaymentRetryState();
+
+            return {
+                orderPlaced: state.orderPlaced,
+                retryMode: state.retryMode,
+                paymentInProgress: state.paymentInProgress,
+                activeMethodCode: state.activeMethodCode,
+                pollTimerActive: state.pollTimerId !== null,
+                blikTimeoutActive: state.blikTimeoutId !== null,
+                blikConfirmationVisible: state.blikConfirmationVisible,
+                paymentAttemptId: state.paymentAttemptId,
+                suppressEmptyCartDialog: state.suppressEmptyCartDialog
+            };
+        };
+
+        const getBluepaymentUiStateSnapshot = (methodCode) => {
+            const uiState = getBluepaymentUiState(methodCode);
+
+            return {
+                selectedGatewayId: uiState.selectedGatewayId ?? null,
+                selectedCardIndex: uiState.selectedCardIndex ?? null,
+                blikCodeLength: String(uiState.blikCode || '').length,
+                acceptedOneClickAgreement: Boolean(uiState.acceptedOneClickAgreement)
+            };
+        };
+
+        const bluepaymentDebugLog = (event, context = {}) => {
+            if (window.BLUEPAYMENT_HYVA_DEBUG === false
+                || !window.console
+                || typeof window.console.info !== 'function'
+            ) {
+                return;
+            }
+
+            window.console.info('[Bluepayment Hyva]', event, context);
+        };
+
+        const getPaymentMethodListElement = () => document.getElementById('payment-method-list');
+        const getBluepaymentProcessingOverlayElement = () => document.getElementById('bluepayment-processing-overlay');
+
+        const normalizeAlertText = (text) => String(text || '').trim();
+        const bluepaymentAlertCleanupScope = Object.freeze({
+            ALL: 'all',
+            BLIK: 'blik'
+        });
+
+        const bluepaymentAlertMessages = new Set();
+        const bluepaymentKnownBlikAlertMessages = new Set([
+            normalizeAlertText('<?= $escaper->escapeJs(__('Choose the way you want to pay.')) ?>'),
+            normalizeAlertText('<?= $escaper->escapeJs(__('Invalid BLIK code.')) ?>'),
+            normalizeAlertText('<?= $escaper->escapeJs(__('The BLIK code has expired. Try again.')) ?>'),
+            normalizeAlertText('<?= $escaper->escapeJs(__('Payment could not be started. Please try again.')) ?>')
+        ]);
+        const bluepaymentKnownAlertMessages = new Set([
+            ...bluepaymentKnownBlikAlertMessages,
+            normalizeAlertText('<?= $escaper->escapeJs(__('You have to select card.')) ?>'),
+            normalizeAlertText('<?= $escaper->escapeJs(__('You have to agree with terms.')) ?>'),
+            normalizeAlertText('<?= $escaper->escapeJs(__('The selected payment channel is no longer available.')) ?>'),
+            normalizeAlertText('<?= $escaper->escapeJs(__('This order can only be completed using Autopay methods.')) ?>')
+        ]);
+
+        const isBluepaymentAlertMessage = (text, scope = bluepaymentAlertCleanupScope.ALL) => {
+            const normalizedText = normalizeAlertText(text);
+            const scopedMessages = scope === bluepaymentAlertCleanupScope.BLIK
+                ? bluepaymentKnownBlikAlertMessages
+                : bluepaymentKnownAlertMessages;
+
+            return bluepaymentAlertMessages.has(normalizedText)
+                || scopedMessages.has(normalizedText);
+        };
+
+        const filterBluepaymentAlerts = (messages, scope = bluepaymentAlertCleanupScope.ALL) => {
+            if (!Array.isArray(messages)) {
+                return [];
+            }
+
+            return messages.filter((message) => {
+                if (!message || typeof message.text !== 'string') {
+                    return message !== undefined && message !== null;
+                }
+
+                return !isBluepaymentAlertMessage(message.text, scope);
+            });
+        };
+
+        const dedupeMessages = (messages) => {
+            const seen = new Set();
+
+            return (Array.isArray(messages) ? messages : []).reduce((result, message) => {
+                if (!message || typeof message.text !== 'string') {
+                    return result;
+                }
+
+                const key = `${ message.type || 'notice' }::${ normalizeAlertText(message.text) }`;
+
+                if (seen.has(key)) {
+                    return result;
+                }
+
+                seen.add(key);
+                result.push(message);
+                return result;
+            }, []);
+        };
+
+        const clearBluepaymentAlerts = (scope = bluepaymentAlertCleanupScope.ALL) => {
+            const messagesRoot = document.getElementById('messages');
+            const messagesComponent = messagesRoot?._x_dataStack?.[0] || null;
+            const componentMessages = filterBluepaymentAlerts(messagesComponent?.messages, scope);
+            const mageMessages = filterBluepaymentAlerts(window.mageMessages, scope);
+            const dispatchedMessages = filterBluepaymentAlerts(window.dispatchedMessages, scope);
+            const preservedMessages = dedupeMessages([
+                ...componentMessages,
+                ...mageMessages,
+                ...dispatchedMessages
+            ]);
+
+            if (Array.isArray(window.mageMessages)) {
+                window.mageMessages = mageMessages;
+            }
+
+            if (Array.isArray(window.dispatchedMessages)) {
+                window.dispatchedMessages = dispatchedMessages;
+            }
+
+            window.dispatchEvent(new Event('clear-messages'));
+
+            if (messagesComponent && Array.isArray(messagesComponent.messages)) {
+                messagesComponent.messages = preservedMessages;
+            } else if (preservedMessages.length > 0) {
+                window.dispatchEvent(new CustomEvent('messages-loaded', {
+                    detail: {
+                        messages: preservedMessages
+                    }
+                }));
+            }
+
+            document.querySelectorAll('#messages .message').forEach((messageElement) => {
+                if (isBluepaymentAlertMessage(messageElement.textContent || '', scope)) {
+                    messageElement.remove();
+                }
+            });
+        };
+
+        const scheduleBluepaymentAlertCleanup = (scope = bluepaymentAlertCleanupScope.ALL) => {
+            clearBluepaymentAlerts(scope);
+
+            window.requestAnimationFrame(() => {
+                clearBluepaymentAlerts(scope);
+            });
+
+            window.setTimeout(() => {
+                clearBluepaymentAlerts(scope);
+            }, 150);
+        };
+
+        const showBluepaymentAlert = (text, duration) => {
+            const normalizedText = normalizeAlertText(text);
+
+            if (normalizedText === '') {
+                return;
+            }
+
+            bluepaymentAlertMessages.add(normalizedText);
+            clearBluepaymentAlerts();
+            hyvaCheckout.message.alert(normalizedText, duration);
+        };
+
+        const getCheckoutPaymentMethodCode = () => {
+            const configuredMethod = window.hyvaCheckout?.config?.getValue?.('payment.method');
+
+            if (typeof configuredMethod === 'string' && configuredMethod !== '') {
+                return configuredMethod;
+            }
+
+            return getPaymentMethodListElement()?.dataset.method || null;
+        };
+
+        const setCheckoutPaymentMethodCode = (code) => {
+            if (typeof code !== 'string' || code === '') {
+                return;
+            }
+
+            const list = getPaymentMethodListElement();
+
+            if (list) {
+                list.dataset.method = code;
+            }
+
+            if (!window.hyvaCheckout?.config?.config) {
+                return;
+            }
+
+            window.hyvaCheckout.config.config.payment = window.hyvaCheckout.config.config.payment || {};
+            window.hyvaCheckout.config.config.payment.method = code;
+        };
+
+        const getActiveBluepaymentMethodCode = () => {
+            const state = getBluepaymentRetryState();
+            const checkoutMethodCode = getCheckoutPaymentMethodCode();
+
+            if (isBluepaymentMethodCode(state.activeMethodCode)) {
+                return state.activeMethodCode;
+            }
+
+            if (isBluepaymentMethodCode(checkoutMethodCode)) {
+                return checkoutMethodCode;
+            }
+
+            return null;
+        };
+
+        const syncBluepaymentBlikConfirmationVisibility = () => {
+            const state = getBluepaymentRetryState();
+            const activeMethodCode = getActiveBluepaymentMethodCode();
+            const components = Object.values(window.bluepaymentHyva || {});
+
+            components.forEach((component) => {
+                if (!component || !Object.prototype.hasOwnProperty.call(component, 'blikConfirmationVisible')) {
+                    return;
+                }
+
+                const isActiveComponent = component.methodCode === activeMethodCode;
+                const canShowBlikConfirmation = typeof component.isBlikCodeVisible === 'boolean'
+                    ? component.isBlikCodeVisible
+                    : false;
+
+                component.blikConfirmationVisible = Boolean(state.blikConfirmationVisible)
+                    && isActiveComponent
+                    && canShowBlikConfirmation;
+            });
+        };
+
+        const shouldSuppressBluepaymentEmptyCartDialog = () => {
+            const state = getBluepaymentRetryState();
+
+            return state.suppressEmptyCartDialog === true;
+        };
+
+        const syncBluepaymentMethodViewState = (activeMethodCode = null) => {
+            document.querySelectorAll('[data-autopay-method-option]').forEach((option) => {
+                const optionCode = option.dataset.autopayMethodOption || '';
+                const isActive = activeMethodCode !== null && optionCode === activeMethodCode;
+                const input = option.querySelector('input[name="payment-method-option"]');
+
+                option.classList.toggle('active', isActive);
+                option.classList.toggle('bg-primary', isActive);
+                option.classList.toggle('bg-opacity-10', isActive);
+                option.classList.toggle('border-primary', isActive);
+                option.classList.toggle('inactive', !isActive);
+                option.classList.toggle('bg-white', !isActive);
+
+                if (input) {
+                    input.checked = isActive;
+                }
+            });
+
+            document.querySelectorAll('[data-autopay-method-view]').forEach((view) => {
+                const viewCode = view.dataset.autopayMethodView || '';
+                const isActive = activeMethodCode !== null && viewCode === activeMethodCode;
+
+                view.classList.toggle('hidden', !isActive);
+            });
+        };
+
+        const syncBluepaymentInteractionState = () => {
+            const state = getBluepaymentRetryState();
+            const overlay = getBluepaymentProcessingOverlayElement();
+            const paymentMethodList = getPaymentMethodListElement();
+            const restrictToBluepayment = state.orderPlaced && isBluepaymentMethodCode(getActiveBluepaymentMethodCode());
+            const showProcessingOverlay = state.paymentInProgress && !state.blikConfirmationVisible;
+
+            syncBluepaymentBlikConfirmationVisibility();
+
+            if (overlay) {
+                overlay.style.display = showProcessingOverlay ? 'flex' : 'none';
+                overlay.setAttribute('aria-hidden', showProcessingOverlay ? 'false' : 'true');
+            }
+
+            if (paymentMethodList) {
+                paymentMethodList.setAttribute(
+                    'aria-busy',
+                    state.paymentInProgress ? 'true' : 'false'
+                );
+            }
+
+            if (document.body) {
+                document.body.style.cursor = showProcessingOverlay ? 'wait' : '';
+            }
+
+            document.querySelectorAll('[data-payment-method-option]').forEach((option) => {
+                const methodCode = option.dataset.paymentMethodOption || '';
+                const shouldDisable = state.paymentInProgress
+                    || (restrictToBluepayment && !isBluepaymentMethodCode(methodCode));
+                const methodInput = option.querySelector('input[name="payment-method-option"]');
+                const methodLabel = option.querySelector('label');
+
+                option.setAttribute('aria-disabled', shouldDisable ? 'true' : 'false');
+                option.style.pointerEvents = shouldDisable ? 'none' : '';
+                option.style.opacity = shouldDisable ? '0.55' : '';
+                option.style.cursor = shouldDisable ? 'not-allowed' : '';
+
+                if (methodLabel) {
+                    methodLabel.style.cursor = shouldDisable ? 'not-allowed' : '';
+                }
+
+                if (methodInput) {
+                    methodInput.disabled = shouldDisable;
+                }
+            });
+        };
+
+        const clearBluepaymentRetryTimers = () => {
+            const state = getBluepaymentRetryState();
+
+            clearTimeout(state.pollTimerId);
+            clearTimeout(state.blikTimeoutId);
+
+            state.pollTimerId = null;
+            state.blikTimeoutId = null;
+        };
+
+        const setActiveBluepaymentMethodCode = (code, { dispatch = true, updateCheckout = true } = {}) => {
+            const normalizedCode = isBluepaymentMethodCode(code) ? code : null;
+            const state = getBluepaymentRetryState();
+            const previousCode = state.activeMethodCode;
+
+            state.activeMethodCode = normalizedCode;
+            syncBluepaymentMethodViewState(normalizedCode);
+
+            const methodRoot = getBluepaymentRootByMethodCode(normalizedCode);
+
+            if (methodRoot) {
+                initBluepaymentTree(methodRoot);
+            }
+
+            if (updateCheckout && normalizedCode) {
+                setCheckoutPaymentMethodCode(normalizedCode);
+            }
+
+            if (dispatch && normalizedCode && normalizedCode !== previousCode) {
+                window.dispatchEvent(new CustomEvent('checkout:payment:method-activate', {
+                    detail: {
+                        method: normalizedCode
+                    }
+                }));
+            }
+
+            syncBluepaymentInteractionState();
+        };
+
+        const syncBluepaymentRetryStateFromCheckout = () => {
+            const checkoutMethodCode = getCheckoutPaymentMethodCode();
+
+            if (isBluepaymentMethodCode(checkoutMethodCode)) {
+                setActiveBluepaymentMethodCode(checkoutMethodCode, {
+                    dispatch: false
+                });
+                return;
+            }
+
+            getBluepaymentRetryState().activeMethodCode = null;
+            syncBluepaymentMethodViewState(null);
+            syncBluepaymentInteractionState();
+        };
+
+        const registerBluepaymentMethod = (code) => {
+            if (!isBluepaymentMethodCode(code) || hyvaCheckout.payment.getByCode(code)) {
+                return;
+            }
+
+            hyvaCheckout.payment.registerMethod({
+                code,
+                method: {
+                    async placeOrder() {
+                        const component = window.bluepaymentHyva?.[code] || null;
+
+                        if (!component) {
+                            await hyvaCheckout.main.getWireComponent().placeOrder(hyvaCheckout.storage.data);
+                            return false;
+                        }
+
+                        return component.placeOrder();
+                    },
+                    async canRedirect() {
+                        return false;
+                    }
+                }
+            });
+        };
+
+        const registerAvailableBluepaymentMethods = () => {
+            document.querySelectorAll('#payment-method-list input[name="payment-method-option"]').forEach((input) => {
+                registerBluepaymentMethod(input.value);
+            });
+        };
+
+        const getBluepaymentRootByMethodCode = (methodCode) => {
+            if (!isBluepaymentMethodCode(methodCode)) {
+                return null;
+            }
+
+            const view = document.querySelector(`[data-autopay-method-view="${methodCode}"]`);
+
+            return view?.querySelector('.autopay-hyva-component[x-data="bluepaymentMethod"]') || null;
+        };
+
+        const initBluepaymentTree = (element) => {
+            if (!element || element._x_dataStack || !window.Alpine || typeof window.Alpine.initTree !== 'function') {
+                return;
+            }
+
+            window.Alpine.initTree(element);
+        };
+
+        const syncGatewaySelectionState = (root, gatewayId) => {
+            if (!root) {
+                return;
+            }
+
+            const normalizedGatewayId = gatewayId !== null && gatewayId !== undefined && gatewayId !== ''
+                ? Number(gatewayId)
+                : null;
+
+            root.dataset.selectedGatewayId = normalizedGatewayId === null || Number.isNaN(normalizedGatewayId)
+                ? ''
+                : String(normalizedGatewayId);
+
+            root.querySelectorAll('.autopay-hyva-gateway[data-gateway-id]').forEach((button) => {
+                const isSelected = normalizedGatewayId !== null
+                    && !Number.isNaN(normalizedGatewayId)
+                    && Number(button.dataset.gatewayId) === normalizedGatewayId;
+                const indicator = button.querySelector('.autopay-hyva-gateway__indicator');
+                const indicatorDot = button.querySelector('.autopay-hyva-gateway__indicator-dot');
+
+                button.classList.toggle('autopay-hyva-gateway--selected', isSelected);
+                button.classList.toggle('autopay-hyva-gateway--idle', !isSelected);
+                button.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+
+                if (indicator) {
+                    indicator.classList.toggle('autopay-hyva-gateway__indicator--selected', isSelected);
+                }
+
+                if (indicatorDot) {
+                    indicatorDot.classList.toggle('autopay-hyva-gateway__indicator-dot--selected', isSelected);
+                }
+            });
+        };
+
+        const syncExistingBluepaymentGatewayStates = () => {
+            document.querySelectorAll('.autopay-hyva-component[data-selected-gateway-id]').forEach((root) => {
+                syncGatewaySelectionState(root, root.dataset.selectedGatewayId || null);
+            });
+        };
+
+        const syncCardSelectionState = (root, cardIndex) => {
+            if (!root) {
+                return;
+            }
+
+            const normalizedCardIndex = cardIndex !== null && cardIndex !== undefined && cardIndex !== ''
+                ? Number(cardIndex)
+                : null;
+
+            root.dataset.selectedCardIndex = normalizedCardIndex === null || Number.isNaN(normalizedCardIndex)
+                ? ''
+                : String(normalizedCardIndex);
+
+            root.querySelectorAll('.autopay-hyva-saved-card[data-card-index]').forEach((card) => {
+                const isSelected = normalizedCardIndex !== null
+                    && !Number.isNaN(normalizedCardIndex)
+                    && Number(card.dataset.cardIndex) === normalizedCardIndex;
+                const input = card.querySelector('.autopay-hyva-saved-card__input');
+                const radio = card.querySelector('.autopay-hyva-saved-card__radio');
+                const radioDot = card.querySelector('.autopay-hyva-saved-card__radio-dot');
+
+                card.classList.toggle('autopay-hyva-saved-card--selected', isSelected);
+                card.classList.toggle('autopay-hyva-saved-card--idle', !isSelected);
+
+                if (input) {
+                    input.checked = isSelected;
+                }
+
+                if (radio) {
+                    radio.classList.toggle('autopay-hyva-saved-card__radio--selected', isSelected);
+                }
+
+                if (radioDot) {
+                    radioDot.classList.toggle('autopay-hyva-saved-card__radio-dot--selected', isSelected);
+                }
+            });
+        };
+
+        const syncExistingBluepaymentCardStates = () => {
+            document.querySelectorAll('.autopay-hyva-component[data-selected-card-index]').forEach((root) => {
+                syncCardSelectionState(root, root.dataset.selectedCardIndex || null);
+            });
+        };
+
+        const getBluepaymentComponent = (root) => {
+            if (!root) {
+                return null;
+            }
+
+            const methodCode = root.dataset.bluepaymentMethodCode || '';
+            const registeredComponent = methodCode ? window.bluepaymentHyva?.[methodCode] || null : null;
+
+            if (registeredComponent && typeof registeredComponent.selectGatewayOption === 'function') {
+                return registeredComponent;
+            }
+
+            const alpineComponent = root._x_dataStack?.[0] || null;
+
+            if (alpineComponent && typeof alpineComponent.selectGatewayOption === 'function') {
+                return alpineComponent;
+            }
+
+            return null;
+        };
+
+        const getBluepaymentMagewireComponent = (root) => {
+            if (!root || !window.Magewire || typeof window.Magewire.find !== 'function') {
+                return null;
+            }
+
+            const wireRoot = root.closest('[wire\\:id]');
+            const wireId = wireRoot?.getAttribute('wire:id') || null;
+
+            if (!wireId) {
+                return null;
+            }
+
+            try {
+                return window.Magewire.find(wireId);
+            } catch (error) {
+                return null;
+            }
+        };
+
+        let bluepaymentGatewayClickHandlerRegistered = false;
+
+        const registerBluepaymentGatewayClickHandler = () => {
+            if (bluepaymentGatewayClickHandlerRegistered) {
+                return;
+            }
+
+            bluepaymentGatewayClickHandlerRegistered = true;
+
+            document.addEventListener('click', (event) => {
+                const button = event.target instanceof Element
+                    ? event.target.closest('.autopay-hyva-gateway[data-gateway-id]')
+                    : null;
+
+                if (!button) {
+                    return;
+                }
+
+                const root = button.closest('.autopay-hyva-component[x-data="bluepaymentMethod"]');
+                const gatewayId = button.dataset.gatewayId || null;
+
+                if (!root || gatewayId === null) {
+                    return;
+                }
+
+                event.preventDefault();
+                initBluepaymentTree(root);
+
+                const component = getBluepaymentComponent(root);
+
+                if (component) {
+                    component.selectGatewayOption(gatewayId);
+                    return;
+                }
+
+                syncGatewaySelectionState(root, gatewayId);
+
+                const magewireComponent = getBluepaymentMagewireComponent(root);
+
+                if (!magewireComponent) {
+                    return;
+                }
+
+                if (typeof magewireComponent.selectGateway === 'function') {
+                    magewireComponent.selectGateway(Number(gatewayId));
+                    return;
+                }
+
+                if (typeof magewireComponent.call === 'function') {
+                    magewireComponent.call('selectGateway', Number(gatewayId));
+                }
+            });
+        };
+
+        let bluepaymentMethodSelectionHandlerRegistered = false;
+
+        const registerBluepaymentMethodSelectionHandler = () => {
+            if (bluepaymentMethodSelectionHandlerRegistered) {
+                return;
+            }
+
+            bluepaymentMethodSelectionHandlerRegistered = true;
+
+            const handleMethodSelection = (event) => {
+                const target = event.target instanceof Element ? event.target : null;
+                const input = target?.matches('input[name="payment-method-option"]')
+                    ? target
+                    : target?.closest('label.autopay-hyva-method__label')?.querySelector('input[name="payment-method-option"]');
+
+                if (!input) {
+                    return;
+                }
+
+                const methodCode = input.value || '';
+                const state = getBluepaymentRetryState();
+
+                if (!state.orderPlaced) {
+                    return;
+                }
+
+                if (state.paymentInProgress) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    return;
+                }
+
+                if (!isBluepaymentMethodCode(methodCode)) {
+                    if (isBluepaymentMethodCode(state.activeMethodCode)) {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        showBluepaymentAlert('<?= $escaper->escapeJs(__('This order can only be completed using Autopay methods.')) ?>');
+                    }
+
+                    return;
+                }
+
+                event.preventDefault();
+                event.stopPropagation();
+                scheduleBluepaymentAlertCleanup();
+
+                if (state.activeMethodCode && state.activeMethodCode !== methodCode) {
+                    const activeMethodRoot = getBluepaymentRootByMethodCode(state.activeMethodCode);
+                    const activeMethodComponent = getBluepaymentComponent(activeMethodRoot);
+
+                    activeMethodComponent?.cancelActivePaymentAttempt?.();
+                }
+
+                setActiveBluepaymentMethodCode(methodCode);
+            };
+
+            document.addEventListener('click', handleMethodSelection, true);
+            document.addEventListener('change', handleMethodSelection, true);
+        };
+
+        let bluepaymentSavedCardClickHandlerRegistered = false;
+
+        const registerBluepaymentSavedCardClickHandler = () => {
+            if (bluepaymentSavedCardClickHandlerRegistered) {
+                return;
+            }
+
+            bluepaymentSavedCardClickHandlerRegistered = true;
+
+            document.addEventListener('click', (event) => {
+                const card = event.target instanceof Element
+                    ? event.target.closest('.autopay-hyva-saved-card[data-card-index]')
+                    : null;
+
+                if (!card) {
+                    return;
+                }
+
+                const root = card.closest('.autopay-hyva-component[x-data="bluepaymentMethod"]');
+                const cardIndex = card.dataset.cardIndex || null;
+
+                if (!root || cardIndex === null) {
+                    return;
+                }
+
+                event.preventDefault();
+                initBluepaymentTree(root);
+
+                const component = getBluepaymentComponent(root);
+
+                if (component && typeof component.selectCardOption === 'function') {
+                    component.selectCardOption(cardIndex);
+                    return;
+                }
+
+                syncCardSelectionState(root, cardIndex);
+
+                const magewireComponent = getBluepaymentMagewireComponent(root);
+
+                if (!magewireComponent) {
+                    return;
+                }
+
+                if (typeof magewireComponent.setSelectedCardIndex === 'function') {
+                    magewireComponent.setSelectedCardIndex(Number(cardIndex));
+                    return;
+                }
+
+                if (typeof magewireComponent.call === 'function') {
+                    magewireComponent.call('setSelectedCardIndex', Number(cardIndex));
+                }
+            });
+        };
+
+        let bluepaymentMagewireHookRegistered = false;
+
+        const registerBluepaymentMagewireHook = () => {
+            if (bluepaymentMagewireHookRegistered || !window.Magewire || typeof window.Magewire.hook !== 'function') {
+                return;
+            }
+
+            bluepaymentMagewireHookRegistered = true;
+
+            window.Magewire.hook('message.processed', () => {
+                const activeMethodCode = getActiveBluepaymentMethodCode();
+
+                if (activeMethodCode) {
+                    const methodRoot = getBluepaymentRootByMethodCode(activeMethodCode);
+
+                    if (methodRoot) {
+                        initBluepaymentTree(methodRoot);
+                    }
+                }
+
+                syncExistingBluepaymentGatewayStates();
+                syncExistingBluepaymentCardStates();
+                syncBluepaymentInteractionState();
+            });
+        };
+
+        let bluepaymentEmptyCartDialogOverridden = false;
+
+        const overrideBluepaymentEmptyCartDialog = () => {
+            if (bluepaymentEmptyCartDialogOverridden
+                || !window.hyvaCheckout
+                || !hyvaCheckout.evaluation
+                || typeof hyvaCheckout.evaluation.registerDeferrable !== 'function'
+            ) {
+                return;
+            }
+
+            const originalDeferrable = hyvaCheckout.evaluation.deferrables?.['checkout.empty-cart.dialog'];
+
+            if (!originalDeferrable || typeof originalDeferrable.action !== 'function') {
+                return;
+            }
+
+            bluepaymentEmptyCartDialogOverridden = true;
+
+            hyvaCheckout.evaluation.registerDeferrable('checkout.empty-cart.dialog', async (arguments_, element = null) => {
+                if (shouldSuppressBluepaymentEmptyCartDialog()) {
+                    return false;
+                }
+
+                return originalDeferrable.action(arguments_, element);
+            });
+        };
+
+        let bluepaymentStorageListenerRegistered = false;
+
+        const registerBluepaymentStorageListener = () => {
+            if (bluepaymentStorageListenerRegistered) {
+                return;
+            }
+
+            bluepaymentStorageListenerRegistered = true;
+
+            window.addEventListener('storage', (event) => {
+                if (event.key !== 'mage-cache-storage' || !shouldSuppressBluepaymentEmptyCartDialog()) {
+                    return;
+                }
+
+                try {
+                    const payload = JSON.parse(event.newValue || '{}');
+                    const cart = payload?.cart || null;
+
+                    if (cart && !cart.summary_count) {
+                        event.stopImmediatePropagation();
+                    }
+                } catch (error) {
+                }
+            }, true);
+        };
+
+        let bluepaymentMethodRegistered = false;
+
+        const registerBluepaymentMethodComponent = () => {
+            if (bluepaymentMethodRegistered || !window.Alpine || typeof window.Alpine.data !== 'function') {
+                return;
+            }
+
+            bluepaymentMethodRegistered = true;
+
+            window.Alpine.data('bluepaymentMethod', () => ({
+                config: {},
+                methodCode: 'bluepayment',
+                widgetFrameId: '',
+                cards: [],
+                selectedGatewayId: null,
+                selectedCardIndex: null,
+                selectedAgreementIds: [],
+                selectedAgreementLookup: {},
+                requiredAgreementIds: [],
+                acceptedOneClickAgreement: false,
+                blikCode: '',
+                blikConfirmationVisible: false,
+                agreements: [],
+                oneClickAgreementText: '',
+                googlePayClient: null,
+                googlePayMerchantInfo: null,
+                googlePayAcceptorId: null,
+                googlePayAvailable: true,
+                applePayAvailable: false,
+                widget: null,
+                widgetReady: false,
+                widgetValid: false,
+                windowListeners: [],
+
+                init() {
+                    this.config = this.getConfig();
+                    this.methodCode = this.config.payment_method_code || this.$root.dataset.bluepaymentMethodCode || 'bluepayment';
+                    this.widgetFrameId = this.$root.dataset.bluepaymentWidgetFrame || `bluepayment-widget-frame-${this.methodCode}`;
+                    const persistedUiState = this.getPersistedUiState();
+                    const persistedCardIndex = hasOwn(persistedUiState, 'selectedCardIndex')
+                        ? persistedUiState.selectedCardIndex
+                        : this.$root.dataset.selectedCardIndex || this.config.selected_card_index;
+                    this.selectedCardIndex = this.normalizeNullableNumber(persistedCardIndex);
+                    this.cards = this.hydrateCards(this.config.cards);
+                    this.selectedAgreementIds = Array.isArray(this.config.selected_agreement_ids)
+                        ? this.config.selected_agreement_ids.map((value) => Number(value))
+                        : [];
+                    this.selectedAgreementLookup = this.toLookup(this.selectedAgreementIds);
+                    this.acceptedOneClickAgreement = hasOwn(persistedUiState, 'acceptedOneClickAgreement')
+                        ? Boolean(persistedUiState.acceptedOneClickAgreement)
+                        : Boolean(this.config.accepted_one_click_agreement);
+                    this.blikCode = hasOwn(persistedUiState, 'blikCode')
+                        ? String(persistedUiState.blikCode || '')
+                        : (this.config.blik_code || '');
+                    this.oneClickAgreementText = this.toPlainText(this.config.one_click_agreement || '');
+                    this.applePayAvailable = Boolean(
+                        window.ApplePaySession
+                        && typeof window.ApplePaySession.canMakePayments === 'function'
+                        && window.ApplePaySession.canMakePayments()
+                    );
+
+                    const fixedGatewayId = this.normalizeNullableNumber(this.config.fixed_gateway_id);
+                    const configuredGatewayId = this.normalizeNullableNumber(
+                        hasOwn(persistedUiState, 'selectedGatewayId')
+                            ? persistedUiState.selectedGatewayId
+                            : this.$root.dataset.selectedGatewayId || this.config.selected_gateway_id
+                    );
+                    this.selectedGatewayId = fixedGatewayId ?? configuredGatewayId;
+
+                    if (fixedGatewayId === null && !this.isKnownGateway(this.selectedGatewayId)) {
+                        this.selectedGatewayId = null;
+                    }
+
+                    window.bluepaymentHyva = window.bluepaymentHyva || {};
+                    window.bluepaymentHyva[this.methodCode] = this;
+                    registerBluepaymentMethod(this.methodCode);
+                    this.toggleEmptyMethodView();
+
+                    const initialGatewayId = fixedGatewayId ?? this.selectedGatewayId ?? this.getDefaultGatewayId();
+
+                    if (initialGatewayId !== null) {
+                        this.selectGatewayOption(initialGatewayId, { syncWire: false });
+                    } else if (fixedGatewayId !== null) {
+                        this.selectedGatewayId = fixedGatewayId;
+                    }
+
+                    this.persistUiState();
+                    this.logDebug('component.init', {
+                        fixedGatewayId,
+                        configuredGatewayId,
+                        initialGatewayId,
+                        persistedUiState: getBluepaymentUiStateSnapshot(this.methodCode)
+                    });
+
+                    this.blikConfirmationVisible = Boolean(getBluepaymentRetryState().blikConfirmationVisible)
+                        && this.isBlikCodeVisible;
+
+                    this.$watch('blikCode', Alpine.debounce((value) => {
+                        this.persistUiState({ blikCode: value });
+                        this.syncMagewire('setBlikCode', value);
+                    }, 150));
+
+                    this.$watch('selectedCardIndex', (value) => {
+                        this.persistUiState({ selectedCardIndex: value });
+                        this.syncMagewire('setSelectedCardIndex', value);
+
+                        if (this.isWidgetFrameVisible) {
+                            this.ensureWidgetInitialized();
+                        } else {
+                            this.resetWidget();
+                        }
+                    });
+
+                    this.registerWindowListener('checkout:payment:method-activate', (event) => {
+                        registerAvailableBluepaymentMethods();
+
+                        if (isBluepaymentMethodCode(event.detail?.method || '')) {
+                            setActiveBluepaymentMethodCode(event.detail.method, {
+                                dispatch: false
+                            });
+                        }
+
+                        if (event.detail.method !== this.methodCode) {
+                            return;
+                        }
+
+                        if (this.isWidgetFrameVisible) {
+                            this.ensureWidgetInitialized();
+                        }
+
+                        if (this.isGooglePaySelected()) {
+                            this.ensureGooglePayReady();
+                        }
+                    });
+
+                    this.registerWindowListener('checkout:payment:method-uninitialized', (event) => {
+                        const deactivatedCode = event.detail?.method?.code || null;
+
+                        if (deactivatedCode !== this.methodCode) {
+                            return;
+                        }
+
+                        this.clearPaymentStatusPolling();
+                        this.clearBlikTimeout();
+                        this.resetWidget();
+                    });
+                },
+
+                destroy() {
+                    this.clearPaymentStatusPolling();
+                    this.clearBlikTimeout();
+                    this.resetWidget();
+                    this.windowListeners.forEach(({ event, handler }) => {
+                        window.removeEventListener(event, handler);
+                    });
+                    this.windowListeners = [];
+
+                    if (window.bluepaymentHyva?.[this.methodCode] === this) {
+                        delete window.bluepaymentHyva[this.methodCode];
+                    }
+                },
+
+                getConfig() {
+                    try {
+                        return JSON.parse(this.$root.dataset.bluepaymentConfig || '{}');
+                    } catch (error) {
+                        return {};
+                    }
+                },
+
+                normalizeNullableNumber(value) {
+                    if (value === null || value === undefined || value === '') {
+                        return null;
+                    }
+
+                    return Number(value);
+                },
+
+                getUniqueCards(cards) {
+                    const seenIndexes = new Set();
+
+                    return (Array.isArray(cards) ? cards : []).filter((card) => {
+                        const cardIndex = card && Object.prototype.hasOwnProperty.call(card, 'index')
+                            ? String(card.index)
+                            : JSON.stringify(card);
+
+                        if (seenIndexes.has(cardIndex)) {
+                            return false;
+                        }
+
+                        seenIndexes.add(cardIndex);
+                        return true;
+                    });
+                },
+
+                hydrateCard(card) {
+                    const normalizedCardIndex = this.normalizeNullableNumber(card?.index);
+                    const isSelected = normalizedCardIndex !== null
+                        && Number(normalizedCardIndex) === Number(this.selectedCardIndex);
+
+                    return Object.assign({}, card, {
+                        selected: isSelected,
+                        itemClass: isSelected
+                            ? 'active bg-primary bg-opacity-10 border-primary autopay-hyva-saved-card--selected'
+                            : 'inactive bg-white autopay-hyva-saved-card--idle',
+                        description: Number(normalizedCardIndex) === -1
+                            ? '<?= $escaper->escapeJs((string) __('Add a new card and pay securely in the embedded form.')) ?>'
+                            : '<?= $escaper->escapeJs((string) __('Use a previously saved card for faster checkout.')) ?>'
+                    });
+                },
+
+                hydrateCards(cards) {
+                    return this.getUniqueCards(cards).map((card) => this.hydrateCard(card));
+                },
+
+                toLookup(values) {
+                    return (values || []).reduce((result, value) => {
+                        result[Number(value)] = true;
+                        return result;
+                    }, {});
+                },
+
+                toPlainText(html) {
+                    const container = document.createElement('div');
+                    container.innerHTML = String(html || '');
+                    return (container.textContent || container.innerText || '').trim();
+                },
+
+                getPersistedUiState() {
+                    return getBluepaymentUiState(this.methodCode);
+                },
+
+                persistUiState(overrides = {}) {
+                    return setBluepaymentUiState(this.methodCode, Object.assign({
+                        selectedGatewayId: this.selectedGatewayId,
+                        selectedCardIndex: this.selectedCardIndex,
+                        blikCode: this.blikCode,
+                        acceptedOneClickAgreement: this.acceptedOneClickAgreement
+                    }, overrides));
+                },
+
+                getDebugContext(overrides = {}) {
+                    return Object.assign({
+                        methodCode: this.methodCode,
+                        selectedGatewayId: this.selectedGatewayId,
+                        selectedCardIndex: this.selectedCardIndex,
+                        blikCodeLength: String(this.blikCode || '').length,
+                        isBlikCodeVisible: this.isBlikCodeVisible,
+                        isBlikConfirmationVisible: this.isBlikConfirmationVisible,
+                        isSavedCardsVisible: this.isSavedCardsVisible,
+                        isWidgetFrameVisible: this.isWidgetFrameVisible,
+                        isActiveMethod: this.isActiveMethod(),
+                        retryState: getBluepaymentRetryStateSnapshot(),
+                        persistedUiState: getBluepaymentUiStateSnapshot(this.methodCode)
+                    }, overrides);
+                },
+
+                logDebug(event, overrides = {}) {
+                    bluepaymentDebugLog(event, this.getDebugContext(overrides));
+                },
+
+                get isBlikCodeVisible() {
+                    return Number(this.selectedGatewayId) === Number(this.config.gateways_ids?.blik)
+                        && Boolean(this.config.blik_zero_enabled);
+                },
+
+                get isBlikConfirmationVisible() {
+                    return this.blikConfirmationVisible
+                        && this.isBlikCodeVisible
+                        && getActiveBluepaymentMethodCode() === this.methodCode;
+                },
+
+                get isSavedCardsVisible() {
+                    return Number(this.selectedGatewayId) === Number(this.config.gateways_ids?.one_click)
+                        && this.cards.length > 0;
+                },
+
+                get isOneClickAgreementVisible() {
+                    return this.isSavedCardsVisible
+                        && Number(this.selectedCardIndex) === -1
+                        && Boolean(this.oneClickAgreementText);
+                },
+
+                get isWidgetFrameVisible() {
+                    if (!Boolean(this.config.iframe_enabled)) {
+                        return false;
+                    }
+
+                    if (Number(this.selectedGatewayId) === Number(this.config.gateways_ids?.card)) {
+                        return true;
+                    }
+
+                    return Number(this.selectedGatewayId) === Number(this.config.gateways_ids?.one_click)
+                        && Number(this.selectedCardIndex) === -1;
+                },
+
+                get hasAgreements() {
+                    return false;
+                },
+
+                toggleEmptyMethodView() {
+                    const methodView = this.$root?.parentElement;
+
+                    if (!methodView) {
+                        return;
+                    }
+
+                    if (this.$root?.dataset?.autopayEmpty === 'true') {
+                        methodView.style.display = 'none';
+                        methodView.setAttribute('aria-hidden', 'true');
+                        return;
+                    }
+
+                    methodView.style.display = '';
+                    methodView.removeAttribute('aria-hidden');
+                },
+
+                registerWindowListener(event, handler) {
+                    window.addEventListener(event, handler);
+                    this.windowListeners.push({ event, handler });
+                },
+
+                clearPaymentStatusPolling({ preserveBlikConfirmation = false } = {}) {
+                    const state = getBluepaymentRetryState();
+                    const shouldKeepBlikConfirmation = preserveBlikConfirmation
+                        && state.blikConfirmationVisible
+                        && this.isBlikCodeVisible;
+
+                    clearTimeout(state.pollTimerId);
+                    state.pollTimerId = null;
+                    state.paymentInProgress = false;
+                    state.blikConfirmationVisible = shouldKeepBlikConfirmation;
+                    this.blikConfirmationVisible = shouldKeepBlikConfirmation;
+                    syncBluepaymentInteractionState();
+                    this.logDebug('attempt.clearPolling', {
+                        preserveBlikConfirmation,
+                        shouldKeepBlikConfirmation
+                    });
+                },
+
+                showBlikConfirmationModal() {
+                    if (!this.isBlikCodeVisible) {
+                        this.logDebug('blik.modal.skip.notVisible');
+                        return;
+                    }
+
+                    getBluepaymentRetryState().blikConfirmationVisible = true;
+                    this.blikConfirmationVisible = true;
+                    syncBluepaymentInteractionState();
+                    this.logDebug('blik.modal.show');
+                },
+
+                clearBlikTimeout() {
+                    const state = getBluepaymentRetryState();
+
+                    clearTimeout(state.blikTimeoutId);
+                    state.blikTimeoutId = null;
+                },
+
+                cancelActivePaymentAttempt() {
+                    const state = getBluepaymentRetryState();
+                    const hadActiveAttempt = state.paymentAttemptId !== null
+                        || state.paymentInProgress
+                        || state.blikConfirmationVisible
+                        || state.pollTimerId !== null
+                        || state.blikTimeoutId !== null;
+
+                    this.clearPaymentStatusPolling();
+                    this.clearBlikTimeout();
+
+                    if (!hadActiveAttempt) {
+                        this.logDebug('attempt.cancel.skip.noActiveAttempt');
+                        return;
+                    }
+
+                    state.paymentAttemptId = null;
+                    state.retryMode = state.orderPlaced;
+                    syncBluepaymentInteractionState();
+                    this.logDebug('attempt.cancel');
+                },
+
+                shouldSyncWire() {
+                    return !getBluepaymentRetryState().orderPlaced;
+                },
+
+                syncMagewire(methodName, ...args) {
+                    if (!this.shouldSyncWire()) {
+                        return false;
+                    }
+
+                    if (typeof this.$wire?.[methodName] === 'function') {
+                        this.$wire[methodName](...args);
+                        return true;
+                    }
+
+                    const magewireComponent = getBluepaymentMagewireComponent(this.$root);
+
+                    if (!magewireComponent) {
+                        return false;
+                    }
+
+                    if (typeof magewireComponent[methodName] === 'function') {
+                        magewireComponent[methodName](...args);
+                        return true;
+                    }
+
+                    if (typeof magewireComponent.call === 'function') {
+                        magewireComponent.call(methodName, ...args);
+                        return true;
+                    }
+
+                    return false;
+                },
+
+                isActiveMethod() {
+                    return getActiveBluepaymentMethodCode() === this.methodCode;
+                },
+
+                markOrderPlaced() {
+                    this.clearPaymentStatusPolling();
+                    this.clearBlikTimeout();
+
+                    const state = getBluepaymentRetryState();
+
+                    state.orderPlaced = true;
+                    state.retryMode = false;
+                    state.paymentInProgress = true;
+                    state.suppressEmptyCartDialog = true;
+
+                    setActiveBluepaymentMethodCode(this.methodCode, {
+                        dispatch: false
+                    });
+                    syncBluepaymentInteractionState();
+                    this.logDebug('order.markPlaced');
+                },
+
+                markPaymentAttemptStarted() {
+                    this.clearPaymentStatusPolling();
+                    this.clearBlikTimeout();
+
+                    const state = getBluepaymentRetryState();
+
+                    state.orderPlaced = true;
+                    state.retryMode = false;
+                    state.paymentInProgress = true;
+                    state.paymentAttemptId = Number.isInteger(state.paymentAttemptId)
+                        ? state.paymentAttemptId + 1
+                        : 1;
+                    state.suppressEmptyCartDialog = true;
+
+                    setActiveBluepaymentMethodCode(this.methodCode, {
+                        dispatch: false
+                    });
+                    syncBluepaymentInteractionState();
+                    this.logDebug('attempt.markStarted');
+                },
+
+                enterRetryMode() {
+                    this.clearPaymentStatusPolling();
+                    this.clearBlikTimeout();
+
+                    const state = getBluepaymentRetryState();
+
+                    state.orderPlaced = true;
+                    state.retryMode = true;
+                    state.paymentInProgress = false;
+                    state.paymentAttemptId = null;
+                    syncBluepaymentInteractionState();
+                    this.logDebug('attempt.enterRetryMode');
+                },
+
+                getCreateRequestPayload(extra = {}) {
+                    return Object.assign({
+                        gateway_id: this.selectedGatewayId,
+                        automatic: true
+                    }, extra);
+                },
+
+                async continuePlacedOrderPayment({ googlePayToken = null } = {}) {
+                    if (googlePayToken) {
+                        this.logDebug('order.continuePlacedPayment', {
+                            branch: 'googlePay'
+                        });
+                        this.markPaymentAttemptStarted();
+                        await this.startGooglePayPayment(googlePayToken);
+                        return true;
+                    }
+
+                    if (this.isBlikCodeVisible) {
+                        this.logDebug('order.continuePlacedPayment', {
+                            branch: 'blik'
+                        });
+                        this.markPaymentAttemptStarted();
+                        await this.startBlikPayment();
+                        return true;
+                    }
+
+                    if (this.isWidgetFrameVisible) {
+                        this.logDebug('order.continuePlacedPayment', {
+                            branch: 'widget'
+                        });
+                        this.callWidgetPayment();
+                        return true;
+                    }
+
+                    if (Number(this.selectedGatewayId) === Number(this.config.gateways_ids?.one_click)
+                        && this.selectedCardIndex !== null
+                    ) {
+                        this.logDebug('order.continuePlacedPayment', {
+                            branch: 'oneClick',
+                            selectedCardIndex: this.selectedCardIndex
+                        });
+                        this.markPaymentAttemptStarted();
+                        window.location.assign(buildUrl(this.config.create_url, {
+                            gateway_id: this.selectedGatewayId,
+                            card_index: this.selectedCardIndex
+                        }));
+
+                        return true;
+                    }
+
+                    this.logDebug('order.continuePlacedPayment', {
+                        branch: 'redirectGateway'
+                    });
+                    this.markPaymentAttemptStarted();
+                    window.location.assign(buildUrl(this.config.create_url, {
+                        gateway_id: this.selectedGatewayId
+                    }));
+
+                    return true;
+                },
+
+                startBlikRetryTimeout() {
+                    if (!this.isBlikCodeVisible) {
+                        return;
+                    }
+
+                    this.clearBlikTimeout();
+                    const attemptId = getBluepaymentRetryState().paymentAttemptId;
+
+                    getBluepaymentRetryState().blikTimeoutId = window.setTimeout(() => {
+                        if (getBluepaymentRetryState().paymentAttemptId !== attemptId) {
+                            this.logDebug('blik.timeout.skip.staleAttempt', {
+                                attemptId
+                            });
+                            return;
+                        }
+
+                        this.logDebug('blik.timeout.expired', {
+                            attemptId
+                        });
+                        this.enterRetryMode();
+                        showBluepaymentAlert('<?= $escaper->escapeJs(__('The BLIK code has expired. Try again.')) ?>');
+                    }, 120000);
+                    this.logDebug('blik.timeout.start', {
+                        attemptId
+                    });
+                },
+
+                isGatewaySelected(gatewayId) {
+                    return Number(this.selectedGatewayId) === Number(gatewayId);
+                },
+
+                hasGatewayOption(gatewayId) {
+                    if (gatewayId === null || gatewayId === undefined || gatewayId === '') {
+                        return false;
+                    }
+
+                    return this.getGatewayOptions().some((option) => Number(option.gateway_id) === Number(gatewayId));
+                },
+
+                isKnownGateway(gatewayId) {
+                    const normalizedGatewayId = this.normalizeNullableNumber(gatewayId);
+
+                    if (normalizedGatewayId === null) {
+                        return false;
+                    }
+
+                    const fixedGatewayId = this.normalizeNullableNumber(this.config.fixed_gateway_id);
+
+                    if (fixedGatewayId !== null) {
+                        return normalizedGatewayId === fixedGatewayId;
+                    }
+
+                    return this.hasGatewayOption(normalizedGatewayId);
+                },
+
+                getGatewayOptions() {
+                    return Array.isArray(this.config.options) ? this.config.options.filter((option) => option && option.gateway_id) : [];
+                },
+
+                getDefaultGatewayId() {
+                    const firstGateway = this.getGatewayOptions()[0] || null;
+                    return firstGateway ? Number(firstGateway.gateway_id) : null;
+                },
+
+                getSelectedGateway() {
+                    return this.getGatewayOptions().find((option) => Number(option.gateway_id) === Number(this.selectedGatewayId)) || null;
+                },
+
+                getSelectedGatewayLogo() {
+                    return this.getSelectedGateway()?.logo_url || '';
+                },
+
+                selectGatewayOption(gatewayId, { syncWire = true } = {}) {
+                    const normalizedGatewayId = gatewayId !== null && gatewayId !== '' ? Number(gatewayId) : null;
+                    const previousGatewayId = this.selectedGatewayId;
+
+                    if (normalizedGatewayId === null || Number.isNaN(normalizedGatewayId)) {
+                        this.logDebug('gateway.select.skip.invalid', {
+                            requestedGatewayId: gatewayId
+                        });
+                        return;
+                    }
+
+                    if (!this.isKnownGateway(normalizedGatewayId)) {
+                        this.logDebug('gateway.select.skip.unknown', {
+                            requestedGatewayId: normalizedGatewayId
+                        });
+                        return;
+                    }
+
+                    if (Number(this.selectedGatewayId) !== normalizedGatewayId) {
+                        this.cancelActivePaymentAttempt();
+                    }
+
+                    this.selectedGatewayId = normalizedGatewayId;
+                    scheduleBluepaymentAlertCleanup();
+                    syncGatewaySelectionState(this.$root, this.selectedGatewayId);
+                    this.selectedAgreementIds = [];
+                    this.selectedAgreementLookup = {};
+                    this.requiredAgreementIds = [];
+                    this.agreements = [];
+
+                    if (!this.isBlikCodeVisible) {
+                        this.blikCode = '';
+                    }
+
+                    if (!this.isSavedCardsVisible) {
+                        this.selectedCardIndex = null;
+                        this.updateCardSelection();
+                        this.acceptedOneClickAgreement = false;
+                        if (syncWire) {
+                            this.syncMagewire('setAcceptedOneClickAgreement', false);
+                        }
+                    }
+
+                    if (syncWire) {
+                        this.syncMagewire('selectGateway', this.selectedGatewayId);
+                    }
+
+                    this.persistUiState();
+                    this.logDebug('gateway.select', {
+                        previousGatewayId,
+                        selectedGatewayId: this.selectedGatewayId,
+                        syncWire
+                    });
+
+                    if (this.isGooglePaySelected() && this.isActiveMethod()) {
+                        this.ensureGooglePayReady();
+                    }
+
+                    if (this.isWidgetFrameVisible && this.isActiveMethod()) {
+                        this.ensureWidgetInitialized();
+                    } else {
+                        this.resetWidget();
+                    }
+                },
+
+                handleGatewayChange(event) {
+                    if (this.normalizeNullableNumber(this.config.fixed_gateway_id) !== null) {
+                        return;
+                    }
+
+                    const gatewayId = event?.target?.dataset?.gatewayId ?? event?.target?.value ?? null;
+                    this.selectGatewayOption(gatewayId);
+                },
+
+                handleBlikInput(event) {
+                    const value = event?.target?.value ?? '';
+                    this.blikCode = String(value || '').replace(/\D+/g, '').slice(0, 6);
+
+                    if (event?.target && event.target.value !== this.blikCode) {
+                        event.target.value = this.blikCode;
+                    }
+                },
+
+                handleCardSelection(event) {
+                    this.selectCardOption(event?.target?.value ?? null);
+                },
+
+                selectCardOption(cardIndex) {
+                    const normalizedCardIndex = cardIndex !== null && cardIndex !== '' ? Number(cardIndex) : null;
+                    const previousCardIndex = this.selectedCardIndex;
+
+                    if (this.selectedCardIndex !== normalizedCardIndex) {
+                        this.cancelActivePaymentAttempt();
+                    }
+
+                    scheduleBluepaymentAlertCleanup();
+                    this.selectedCardIndex = normalizedCardIndex;
+                    syncCardSelectionState(this.$root, this.selectedCardIndex);
+                    this.updateCardSelection();
+                    this.logDebug('card.select', {
+                        previousCardIndex,
+                        selectedCardIndex: this.selectedCardIndex
+                    });
+                },
+
+                handleOneClickAgreementChange(event) {
+                    const checked = event?.target?.checked;
+                    this.acceptedOneClickAgreement = Boolean(checked);
+                    this.persistUiState({ acceptedOneClickAgreement: this.acceptedOneClickAgreement });
+
+                    this.syncMagewire('setAcceptedOneClickAgreement', this.acceptedOneClickAgreement);
+                },
+
+                isGooglePaySelected() {
+                    return Number(this.selectedGatewayId) === Number(this.config.gateways_ids?.google_pay);
+                },
+
+                toggleAgreement(event) {
+                    return event;
+                },
+
+                updateCardSelection() {
+                    this.cards = this.cards.map((card) => this.hydrateCard(card));
+                    syncCardSelectionState(this.$root, this.selectedCardIndex);
+                },
+
+                syncAgreements() {
+                    this.selectedAgreementLookup = {};
+                },
+
+                async loadAgreements(gatewayId, restoreSelection = false) {
+                    this.agreements = [];
+                    this.selectedAgreementIds = [];
+                    this.selectedAgreementLookup = {};
+                    this.requiredAgreementIds = [];
+                    return Promise.resolve();
+                },
+
+                validate() {
+                    if ((Array.isArray(this.config.options) && this.config.options.length > 0)
+                        && this.normalizeNullableNumber(this.config.fixed_gateway_id) === null
+                        && !this.selectedGatewayId
+                    ) {
+                        this.logDebug('placeOrder.validate.fail.missingGateway');
+                        showBluepaymentAlert('<?= $escaper->escapeJs(__('Choose the way you want to pay.')) ?>');
+                        return false;
+                    }
+
+                    if (this.isBlikCodeVisible && String(this.blikCode).length !== 6) {
+                        this.logDebug('placeOrder.validate.fail.invalidBlikCode');
+                        showBluepaymentAlert('<?= $escaper->escapeJs(__('Invalid BLIK code.')) ?>');
+                        return false;
+                    }
+
+                    if (this.isSavedCardsVisible && (this.selectedCardIndex === null || this.selectedCardIndex === '')) {
+                        showBluepaymentAlert('<?= $escaper->escapeJs(__('You have to select card.')) ?>');
+                        return false;
+                    }
+
+                    if (this.isOneClickAgreementVisible && !this.acceptedOneClickAgreement) {
+                        showBluepaymentAlert('<?= $escaper->escapeJs(__('You have to agree with terms.')) ?>');
+                        return false;
+                    }
+
+                    return true;
+                },
+
+                async placeOrderOnWire() {
+                    const state = getBluepaymentRetryState();
+                    const placement = waitForOrderPlacement();
+
+                    state.paymentInProgress = true;
+                    state.suppressEmptyCartDialog = true;
+                    syncBluepaymentInteractionState();
+                    this.logDebug('order.placeOnWire.start');
+
+                    try {
+                        await hyvaCheckout.main.getWireComponent().placeOrder(hyvaCheckout.storage.data);
+                        const placed = await placement;
+
+                        if (!placed) {
+                            state.paymentInProgress = false;
+                            state.suppressEmptyCartDialog = false;
+                            syncBluepaymentInteractionState();
+                        }
+
+                        this.logDebug('order.placeOnWire.result', {
+                            placed
+                        });
+                        return placed;
+                    } catch (error) {
+                        state.paymentInProgress = false;
+                        state.suppressEmptyCartDialog = false;
+                        syncBluepaymentInteractionState();
+                        this.logDebug('order.placeOnWire.error', {
+                            message: error?.message || null
+                        });
+                        throw error;
+                    }
+                },
+
+                async handoffPlaceOrderToActiveMethod() {
+                    const activeMethodCode = getActiveBluepaymentMethodCode();
+
+                    if (!activeMethodCode || activeMethodCode === this.methodCode) {
+                        return null;
+                    }
+
+                    const activeComponent = window.bluepaymentHyva?.[activeMethodCode] || null;
+
+                    if (!activeComponent
+                        || activeComponent === this
+                        || typeof activeComponent.placeOrder !== 'function'
+                    ) {
+                        return null;
+                    }
+
+                    this.logDebug('placeOrder.delegateToActiveMethod', {
+                        activeMethodCode
+                    });
+
+                    return activeComponent.placeOrder();
+                },
+
+                async placeOrder() {
+                    const delegatedResult = await this.handoffPlaceOrderToActiveMethod();
+
+                    if (delegatedResult !== null) {
+                        return delegatedResult;
+                    }
+
+                    clearBluepaymentAlerts();
+                    this.logDebug('placeOrder.start', {
+                        orderAlreadyPlaced: getBluepaymentRetryState().orderPlaced
+                    });
+
+                    if (!this.validate()) {
+                        return false;
+                    }
+
+                    if (this.isGooglePaySelected()) {
+                        const token = await this.requestGooglePayToken();
+                        if (!token) {
+                            return false;
+                        }
+
+                        if (getBluepaymentRetryState().orderPlaced) {
+                            return this.continuePlacedOrderPayment({ googlePayToken: token });
+                        }
+
+                        const placed = await this.placeOrderOnWire();
+                        if (!placed) {
+                            return false;
+                        }
+
+                        this.markOrderPlaced();
+                        await this.continuePlacedOrderPayment({ googlePayToken: token });
+                        return true;
+                    }
+
+                    if (getBluepaymentRetryState().orderPlaced) {
+                        this.logDebug('placeOrder.continueExistingOrder');
+                        return this.continuePlacedOrderPayment();
+                    }
+
+                    const placed = await this.placeOrderOnWire();
+                    if (!placed) {
+                        return false;
+                    }
+
+                    this.markOrderPlaced();
+                    return this.continuePlacedOrderPayment();
+                },
+
+                async ensureGooglePayReady() {
+                    try {
+                        await loadScript('https://pay.google.com/gp/p/js/pay.js');
+
+                        const response = await fetchJson(this.config.google_pay_url);
+                        if (response.error) {
+                            this.googlePayAvailable = false;
+                            return false;
+                        }
+
+                        this.googlePayMerchantInfo = response.merchantInfo;
+                        this.googlePayAcceptorId = String(response.acceptorId);
+                        this.googlePayClient = new google.payments.api.PaymentsClient({
+                            environment: this.config.test_mode ? 'TEST' : 'PRODUCTION'
+                        });
+                        this.googlePayAvailable = true;
+
+                        return true;
+                    } catch (error) {
+                        this.googlePayAvailable = false;
+                        return false;
+                    }
+                },
+
+                getGooglePayTransactionData() {
+                    return {
+                        apiVersion: 2,
+                        apiVersionMinor: 0,
+                        merchantInfo: this.googlePayMerchantInfo,
+                        allowedPaymentMethods: [{
+                            type: 'CARD',
+                            parameters: {
+                                allowedAuthMethods: ['PAN_ONLY', 'CRYPTOGRAM_3DS'],
+                                allowedCardNetworks: ['MASTERCARD', 'VISA']
+                            },
+                            tokenizationSpecification: {
+                                type: 'PAYMENT_GATEWAY',
+                                parameters: {
+                                    gateway: 'bluemedia',
+                                    gatewayMerchantId: this.googlePayAcceptorId
+                                }
+                            }
+                        }],
+                        shippingAddressRequired: false,
+                        transactionInfo: {
+                            totalPriceStatus: 'FINAL',
+                            totalPrice: String(this.config.grand_total || '0.00'),
+                            currencyCode: this.config.currency_code || 'PLN'
+                        }
+                    };
+                },
+
+                async requestGooglePayToken() {
+                    const ready = this.googlePayClient || await this.ensureGooglePayReady();
+                    if (!ready || !this.googlePayClient) {
+                        showBluepaymentAlert('<?= $escaper->escapeJs(__('Google Pay is not available right now.')) ?>');
+                        return null;
+                    }
+
+                    try {
+                        const data = await this.googlePayClient.loadPaymentData(this.getGooglePayTransactionData());
+                        return data?.paymentMethodData?.tokenizationData?.token || null;
+                    } catch (error) {
+                        return null;
+                    }
+                },
+
+                async startGooglePayPayment(token) {
+                    try {
+                        const response = await postJson(this.config.create_url, this.getCreateRequestPayload({ token }));
+
+                        if (response?.params?.redirectUrl) {
+                            window.location.assign(response.params.redirectUrl);
+                            return;
+                        }
+
+                        if (response?.params?.paymentStatus) {
+                            this.pollPaymentStatus(response.params, {
+                                attemptId: getBluepaymentRetryState().paymentAttemptId
+                            });
+                            return;
+                        }
+                    } catch (error) {
+                    }
+
+                    this.enterRetryMode();
+                    showBluepaymentAlert('<?= $escaper->escapeJs(__('Payment could not be started. Please try again.')) ?>');
+                },
+
+                async startBlikPayment() {
+                    this.logDebug('blik.start.request');
+
+                    try {
+                        const response = await postJson(this.config.create_url, this.getCreateRequestPayload({
+                            code: this.blikCode
+                        }));
+                        const responseParams = response?.params || {};
+
+                        this.logDebug('blik.start.response', {
+                            confirmation: responseParams.confirmation || null,
+                            hasPaymentStatus: hasOwn(responseParams, 'paymentStatus'),
+                            paymentStatus: responseParams.paymentStatus ?? null,
+                            gatewayId: responseParams.GatewayID ?? null
+                        });
+
+                        if (responseParams.confirmation === 'NOTCONFIRMED') {
+                            this.enterRetryMode();
+                            showBluepaymentAlert('<?= $escaper->escapeJs(__('Invalid BLIK code.')) ?>');
+                            return;
+                        }
+
+                        if (responseParams.confirmation === 'CONFIRMED' || hasOwn(responseParams, 'paymentStatus')) {
+                            this.startBlikRetryTimeout();
+                            this.pollPaymentStatus(responseParams, {
+                                attemptId: getBluepaymentRetryState().paymentAttemptId
+                            });
+                            return;
+                        }
+                    } catch (error) {
+                        this.logDebug('blik.start.error', {
+                            message: error?.message || null
+                        });
+                    }
+
+                    this.enterRetryMode();
+                    showBluepaymentAlert('<?= $escaper->escapeJs(__('Payment could not be started. Please try again.')) ?>');
+                },
+
+                pollPaymentStatus(params, { attemptId = null } = {}) {
+                    const activeAttemptId = attemptId ?? getBluepaymentRetryState().paymentAttemptId;
+                    const isBlikFlow = Number(params?.GatewayID) === Number(this.config.gateways_ids?.blik)
+                        || this.isBlikCodeVisible;
+
+                    this.logDebug('paymentStatus.poll.enter', {
+                        activeAttemptId,
+                        paramsGatewayId: params?.GatewayID ?? null,
+                        paymentStatus: params?.paymentStatus ?? null,
+                        isBlikFlow
+                    });
+
+                    if (activeAttemptId === null || getBluepaymentRetryState().paymentAttemptId !== activeAttemptId) {
+                        this.logDebug('paymentStatus.poll.skip.staleAttempt', {
+                            activeAttemptId
+                        });
+                        return;
+                    }
+
+                    if (params.paymentStatus === 'SUCCESS') {
+                        this.logDebug('paymentStatus.poll.success', {
+                            activeAttemptId
+                        });
+                        this.clearPaymentStatusPolling();
+                        this.clearBlikTimeout();
+                        window.location.assign(buildUrl(this.config.back_url, {
+                            ServiceID: params.ServiceID,
+                            OrderID: params.OrderID,
+                            Hash: params.hash,
+                            Status: 'SUCCESS'
+                        }));
+                        return;
+                    }
+
+                    if (params.paymentStatus === 'FAILURE') {
+                        this.logDebug('paymentStatus.poll.failure', {
+                            activeAttemptId
+                        });
+                        this.clearPaymentStatusPolling();
+                        this.clearBlikTimeout();
+                        this.enterRetryMode();
+                        showBluepaymentAlert('<?= $escaper->escapeJs(__('Payment failed. Please try again or use a different payment method.')) ?>');
+                        return;
+                    }
+
+                    this.clearPaymentStatusPolling({
+                        preserveBlikConfirmation: isBlikFlow
+                    });
+
+                    if (isBlikFlow) {
+                        this.showBlikConfirmationModal();
+                    }
+
+                    getBluepaymentRetryState().paymentInProgress = true;
+                    syncBluepaymentInteractionState();
+                    getBluepaymentRetryState().pollTimerId = window.setTimeout(async () => {
+                        try {
+                            if (getBluepaymentRetryState().paymentAttemptId !== activeAttemptId) {
+                                this.logDebug('paymentStatus.poll.timer.skip.staleAttempt', {
+                                    activeAttemptId
+                                });
+                                return;
+                            }
+
+                            const response = await fetchJson(this.config.payment_status_url);
+
+                            if (getBluepaymentRetryState().paymentAttemptId !== activeAttemptId) {
+                                this.logDebug('paymentStatus.poll.response.skip.staleAttempt', {
+                                    activeAttemptId
+                                });
+                                return;
+                            }
+
+                            this.logDebug('paymentStatus.poll.response', {
+                                activeAttemptId,
+                                responseStatus: response?.Status ?? null,
+                                responseGatewayId: response?.GatewayID ?? null
+                            });
+
+                            if (hasOwn(response, 'Status')) {
+                                this.pollPaymentStatus({
+                                    ServiceID: response.ServiceID,
+                                    OrderID: response.OrderID,
+                                    hash: response.hash,
+                                    paymentStatus: response.Status
+                                }, {
+                                    attemptId: activeAttemptId
+                                });
+                            }
+                        } catch (error) {
+                            if (getBluepaymentRetryState().paymentAttemptId !== activeAttemptId) {
+                                this.logDebug('paymentStatus.poll.error.skip.staleAttempt', {
+                                    activeAttemptId
+                                });
+                                return;
+                            }
+
+                            this.logDebug('paymentStatus.poll.error', {
+                                activeAttemptId,
+                                message: error?.message || null
+                            });
+                            this.enterRetryMode();
+                            showBluepaymentAlert('<?= $escaper->escapeJs(__('Unable to verify payment status.')) ?>');
+                        }
+                    }, 2000);
+                },
+
+                getWidgetHost() {
+                    return this.config.test_mode ? 'https://testcards.autopay.eu' : 'https://cards.autopay.eu';
+                },
+
+                getWidgetFrame() {
+                    return document.getElementById(this.widgetFrameId);
+                },
+
+                getWidgetConfig() {
+                    const widgetConfig = {
+                        language: document.documentElement.lang?.toLowerCase().split('-')[0] || 'pl',
+                        amount: Number(this.config.grand_total || 0),
+                        currency: this.config.currency_code || 'PLN',
+                        serviceId: Number(this.config.service_id || 0)
+                    };
+
+                    if (Number(this.selectedGatewayId) === Number(this.config.gateways_ids?.one_click)
+                        && Number(this.selectedCardIndex) === -1
+                    ) {
+                        widgetConfig.recurringAction = 'INIT_WITH_PAYMENT';
+                    }
+
+                    return widgetConfig;
+                },
+
+                async ensureWidgetInitialized() {
+                    if (!this.isWidgetFrameVisible) {
+                        return;
+                    }
+
+                    try {
+                        await loadScript(`${this.getWidgetHost()}/widget-new/widget-communication.min.js`);
+                    } catch (error) {
+                        showBluepaymentAlert('<?= $escaper->escapeJs(__('Card form is unavailable right now.')) ?>');
+                        return;
+                    }
+
+                    const frame = this.getWidgetFrame();
+                    if (!frame || typeof WidgetConnection === 'undefined' || typeof widgetEvents === 'undefined') {
+                        return;
+                    }
+
+                    if (this.widget) {
+                        return;
+                    }
+
+                    frame.src = `${this.getWidgetHost()}/widget-new/partner`;
+                    this.widget = new WidgetConnection(this.getWidgetConfig());
+
+                    this.widget.startConnection(frame).then(() => {
+                        this.widgetReady = true;
+                        this.widget.on(widgetEvents.formSuccess, this.onWidgetSuccess.bind(this));
+                        this.widget.on(widgetEvents.formError, this.onWidgetError.bind(this));
+                        this.widget.on(widgetEvents.validityStatus, this.onWidgetValidity.bind(this));
+                        this.widget.on(widgetEvents.validationResult, this.onWidgetValidity.bind(this));
+                    }).catch(() => {
+                        this.resetWidget();
+                    });
+                },
+
+                callWidgetPayment() {
+                    if (!this.widget || !this.widgetReady) {
+                        this.enterRetryMode();
+                        showBluepaymentAlert('<?= $escaper->escapeJs(__('Card form is not ready yet. Please wait a moment and try again.')) ?>');
+                        return;
+                    }
+
+                    if (this.widget.invalid === true || this.widgetValid === false) {
+                        this.widget.validateForm();
+                        this.enterRetryMode();
+                        showBluepaymentAlert('<?= $escaper->escapeJs(__('Please complete card data correctly.')) ?>');
+                        return;
+                    }
+
+                    this.markPaymentAttemptStarted();
+                    this.widget.sendForm();
+                },
+
+                onWidgetValidity(message, eventData) {
+                    this.widgetValid = Boolean(eventData && eventData.valid);
+                },
+
+                async onWidgetSuccess(message, eventData) {
+                    const token = typeof message === 'string'
+                        ? message
+                        : eventData?.message || message?.message || '';
+
+                    if (!token) {
+                        this.enterRetryMode();
+                        showBluepaymentAlert('<?= $escaper->escapeJs(__('Card token is missing. Please try again.')) ?>');
+                        return;
+                    }
+
+                    try {
+                        const response = await postJson(this.config.create_url, {
+                            gateway_id: this.selectedGatewayId,
+                            automatic: true,
+                            token,
+                            card_index: this.selectedCardIndex
+                        });
+
+                        if (response?.redirect_url) {
+                            window.location.assign(response.redirect_url);
+                            return;
+                        }
+                    } catch (error) {
+                    }
+
+                    this.enterRetryMode();
+                    showBluepaymentAlert('<?= $escaper->escapeJs(__('Payment request failed. Please try again.')) ?>');
+                },
+
+                onWidgetError() {
+                    this.enterRetryMode();
+                    showBluepaymentAlert('<?= $escaper->escapeJs(__('Check card form fields and try again.')) ?>');
+                },
+
+                resetWidget() {
+                    if (this.widget && typeof this.widget.stopConnection === 'function') {
+                        this.widget.stopConnection();
+                    }
+
+                    const frame = this.getWidgetFrame();
+                    if (frame) {
+                        frame.removeAttribute('src');
+                    }
+
+                    this.widget = null;
+                    this.widgetReady = false;
+                    this.widgetValid = false;
+                }
+            }));
+
+            hyvaCheckout.api.priority(() => {
+                registerAvailableBluepaymentMethods();
+                overrideBluepaymentEmptyCartDialog();
+                registerBluepaymentStorageListener();
+            });
+
+            syncBluepaymentRetryStateFromCheckout();
+
+            const activeMethodCode = getActiveBluepaymentMethodCode();
+
+            if (activeMethodCode) {
+                const methodRoot = getBluepaymentRootByMethodCode(activeMethodCode);
+
+                if (methodRoot) {
+                    initBluepaymentTree(methodRoot);
+                }
+            }
+
+            syncExistingBluepaymentGatewayStates();
+            syncExistingBluepaymentCardStates();
+            syncBluepaymentInteractionState();
+            registerBluepaymentMethodSelectionHandler();
+            registerBluepaymentGatewayClickHandler();
+            registerBluepaymentSavedCardClickHandler();
+            registerBluepaymentMagewireHook();
+        };
+
+        if (window.Alpine && typeof window.Alpine.data === 'function') {
+            registerBluepaymentMethodComponent();
+        } else {
+            document.addEventListener('alpine:init', registerBluepaymentMethodComponent, { once: true });
+        }
+
+        window.addEventListener('checkout:init:evaluation', () => {
+            hyvaCheckout.api.priority(() => {
+                registerAvailableBluepaymentMethods();
+                overrideBluepaymentEmptyCartDialog();
+                registerBluepaymentStorageListener();
+            });
+
+            syncBluepaymentRetryStateFromCheckout();
+
+            const activeMethodCode = getActiveBluepaymentMethodCode();
+
+            if (activeMethodCode) {
+                const methodRoot = getBluepaymentRootByMethodCode(activeMethodCode);
+
+                if (methodRoot) {
+                    initBluepaymentTree(methodRoot);
+                }
+            }
+
+            syncExistingBluepaymentGatewayStates();
+            syncExistingBluepaymentCardStates();
+            syncBluepaymentInteractionState();
+            registerBluepaymentMethodSelectionHandler();
+            registerBluepaymentGatewayClickHandler();
+            registerBluepaymentSavedCardClickHandler();
+            registerBluepaymentMagewireHook();
+        });
+    })();
+</script>
+<?php $hyvaCsp->registerInlineScript() ?>

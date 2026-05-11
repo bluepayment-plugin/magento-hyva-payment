@@ -1,0 +1,7 @@
+Please select a payment channel.,Wybierz kanał płatności.
+Override Hyvä payment list template,Zastąp szablon listy płatności Hyvä
+Enable to replace Hyvä payment method list rendering with the Zen custom template.,"Włącz, aby zastąpić listę metod płatności Hyvä niestandardowym szablonem Zen."
+Card payment failed. Please try again.,Niepowodzenie płatności kartą. Proszę spróbować ponownie.
+Cart payment has been cancelled.,Płatność kartą została anulowana.
+Card payment successful.,Płatność kartą zakończona sukcesem.
+Card payment failed.,Niepowodzenie płatności kartą.

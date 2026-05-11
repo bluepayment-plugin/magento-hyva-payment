@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<page xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:framework:View/Layout/etc/page_configuration.xsd">
+    <head>
+        <css src="BlueMedia_HyvaPayment::css/autopay-hyva.css"/>
+    </head>
+    <body>
+        <referenceContainer name="magewire.plugin.scripts">
+            <block name="component.payment.method.bluepayment.csp"
+                   template="BlueMedia_HyvaPayment::component/payment/method/bluepayment-csp-js.phtml"
+                   cacheable="false" />
+        </referenceContainer>
+    </body>
+</page>

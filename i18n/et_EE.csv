@@ -1,0 +1,7 @@
+Please select a payment channel.,Palun valige maksekanal.
+Override Hyvä payment list template,Kirjuta Hyvä maksete loendi mall üle
+Enable to replace Hyvä payment method list rendering with the Zen custom template.,Luba Hyvä maksemeetodite loendi kuvamine asendada Zeni kohandatud malliga.
+Card payment failed. Please try again.,Kaardimakse ebaõnnestus. Palun proovige uuesti.
+Cart payment has been cancelled.,Ostukorvi makse on tühistatud.
+Card payment successful.,Kaardimakse õnnestus.
+Card payment failed.,Kaardimakse ebaõnnestus.

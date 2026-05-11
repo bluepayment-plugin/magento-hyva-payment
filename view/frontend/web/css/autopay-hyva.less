@@ -1,0 +1,583 @@
+.autopay-hyva-fit-media(@max-height; @max-width: 100%) {
+    display: block;
+    width: auto;
+    height: auto;
+    max-width: @max-width;
+    max-height: @max-height;
+    object-fit: contain;
+    object-position: center;
+}
+
+.autopay-hyva-surface-transition() {
+    transition: border-color 0.2s ease, background-color 0.2s ease;
+}
+
+.autopay-hyva-visually-hidden() {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.autopay-hyva-methods,
+.autopay-hyva-component {
+    --autopay-accent: var(--autopay-template-accent, var(--color-primary, currentColor));
+    --autopay-brand: var(--autopay-template-brand, #199BFA);
+    --autopay-shell: var(--autopay-template-shell, var(--color-surface, #ffffff));
+    --autopay-surface: var(--autopay-template-surface, var(--autopay-shell));
+    --autopay-border: var(--autopay-template-border, var(--form-stroke, color-mix(in srgb, var(--autopay-accent) 16%, transparent)));
+    --autopay-border-subtle: color-mix(in srgb, var(--autopay-accent) 12%, var(--autopay-surface));
+    --autopay-indicator-border: color-mix(in srgb, var(--autopay-border) 72%, var(--autopay-accent) 28%);
+    --autopay-accent-hover: color-mix(in srgb, var(--autopay-accent) 34%, var(--autopay-border));
+    --autopay-accent-soft: color-mix(in srgb, var(--autopay-accent) 10%, var(--autopay-surface));
+    --autopay-accent-ring: color-mix(in srgb, var(--autopay-accent) 20%, transparent);
+    --autopay-selection-dot: var(--autopay-accent);
+    --autopay-text: var(--autopay-template-text, var(--card-color, var(--color-fg, currentColor)));
+    --autopay-text-muted: var(--autopay-template-text-muted, var(--color-fg-secondary, color-mix(in srgb, var(--autopay-text) 72%, var(--autopay-surface))));
+    --autopay-text-soft: color-mix(in srgb, var(--autopay-text) 70%, var(--autopay-surface));
+    --autopay-radius-shell: var(--autopay-template-radius-shell, var(--radius-md, 0.375rem));
+    --autopay-radius-card: var(--autopay-template-radius-card, var(--radius-md, 0.375rem));
+    --autopay-radius-field: var(--autopay-template-radius-field, var(--radius-md, 0.375rem));
+    --autopay-radius-badge: var(--autopay-template-radius-badge, var(--radius-sm, 0.25rem));
+}
+
+// When the Hyva payment list override is disabled, Hyva renders the payment label
+// inside its own compact row. Tone down the text size for Autopay entries so that
+// the mapped method icons stay visually balanced in the fallback view.
+#payment-method-option-bluepayment > label > span > span.text-gray-700.font-medium.break-words.hyphens-auto,
+[id^='payment-method-option-bluepayment_'] > label > span > span.text-gray-700.font-medium.break-words.hyphens-auto {
+    font-size: 14px;
+    line-height: 1.35;
+
+    @media (min-width: 768px) {
+        font-size: 15px;
+    }
+}
+
+.autopay-hyva-fallback-icon {
+    display: block;
+    width: auto;
+    height: 28px;
+    max-width: 88px;
+    object-fit: contain;
+    object-position: center right;
+
+    &--base {
+        height: 18px;
+        max-width: 72px;
+    }
+
+    &--gateway {
+        height: 28px;
+        max-width: 88px;
+    }
+
+    &--gateway-id-523,
+    &--gateway-id-700,
+    &--gateway-id-702 {
+        height: 32px;
+        max-width: 96px;
+    }
+
+    &--gateway-id-1506 {
+        height: 30px;
+        max-width: 88px;
+    }
+}
+
+.autopay-hyva-methods {
+    .autopay-hyva-method {
+        color: var(--autopay-text);
+        .autopay-hyva-surface-transition();
+
+        &__label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            min-height: 108px;
+            padding: 14px 18px;
+            margin: 0;
+            cursor: pointer;
+        }
+
+        &__icon {
+            display: flex;
+            width: 52px;
+            min-height: 40px;
+            align-items: center;
+            justify-content: center;
+            flex-basis: 52px;
+            max-width: 52px;
+            flex-shrink: 0;
+
+            @media (min-width: 768px) {
+                width: 60px;
+                min-height: 44px;
+                flex-basis: 60px;
+                max-width: 60px;
+            }
+
+            &--rendered {
+                img,
+                svg {
+                    .autopay-hyva-fit-media(34px);
+
+                    @media (min-width: 768px) {
+                        max-height: 38px;
+                    }
+                }
+            }
+        }
+
+        &__icon-placeholder {
+            display: none;
+            width: 60px;
+            flex-basis: 60px;
+            max-width: 60px;
+            flex-shrink: 0;
+        }
+
+        &__image {
+            .autopay-hyva-fit-media(34px);
+
+            @media (min-width: 768px) {
+                max-height: 38px;
+            }
+
+            &--base {
+                max-width: 34px;
+
+                @media (min-width: 768px) {
+                    max-width: 38px;
+                    max-height: 38px;
+                }
+            }
+        }
+
+        &__body {
+            display: flex;
+            min-width: 0;
+            flex: 1 1 auto;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        &__title {
+            font-size: 16px;
+            font-weight: 600;
+            line-height: 1.2;
+
+            @media (min-width: 768px) {
+                font-size: 17px;
+            }
+        }
+
+        &__generic-title {
+            display: block;
+            min-width: 0;
+            color: inherit;
+            font-size: 15px;
+            font-weight: 600;
+            line-height: 1.4;
+            hyphens: auto;
+            word-break: break-word;
+        }
+
+        &__description {
+            color: var(--autopay-text-muted);
+            font-size: 12px;
+            line-height: 18px;
+        }
+    }
+
+    .autopay-hyva-header {
+        position: relative;
+        overflow: hidden;
+        padding-top: 22px;
+        padding-bottom: 8px;
+        margin: 0 8px 16px;
+
+        @media (min-width: 768px) {
+            min-height: 104px;
+            padding-right: 236px;
+        }
+
+        &__brand {
+            position: relative;
+            z-index: 1;
+            display: inline-flex;
+            background: transparent;
+        }
+
+        &__logo {
+            display: block;
+            width: 120px;
+            max-width: 100%;
+            height: auto;
+            margin-top: 12px;
+            object-fit: contain;
+            object-position: left center;
+        }
+
+        &__divider {
+            display: block;
+            position: absolute;
+            top: 40px;
+            left: 132px;
+            right: 0;
+            height: 2px;
+            background: var(--autopay-brand);
+        }
+
+        &__trustmarks {
+            position: absolute;
+            top: 48px;
+            right: 0;
+            z-index: 1;
+            margin-top: 0;
+            background: transparent;
+        }
+
+        &__trustmarks-image {
+            display: block;
+            width: 220px;
+            max-width: 220px;
+            height: auto;
+            object-fit: contain;
+            object-position: left center;
+        }
+    }
+
+    &__footer {
+        padding: 0 8px;
+        margin-top: 16px;
+    }
+
+    &__footer-line {
+        display: block;
+        width: 100%;
+        height: 2px;
+        background: var(--autopay-brand);
+    }
+}
+
+.autopay-hyva-component {
+    display: flex;
+    container-type: inline-size;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--autopay-border);
+    border-radius: var(--autopay-radius-shell);
+    background: var(--autopay-shell);
+
+    @media (min-width: 768px) {
+        padding: 16px;
+    }
+}
+
+.autopay-hyva-panel {
+    &--copy {
+        color: var(--autopay-text);
+        font-size: 12px;
+        line-height: 20px;
+    }
+
+    &__field {
+        display: block;
+        margin-top: 16px;
+    }
+
+    &__field-label {
+        .autopay-hyva-visually-hidden();
+    }
+}
+
+.autopay-hyva-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+
+    &__backdrop {
+        position: absolute;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.38);
+        backdrop-filter: blur(2px);
+    }
+
+    &__dialog {
+        position: relative;
+        display: flex;
+        width: min(100%, 400px);
+        flex-direction: column;
+        align-items: center;
+        border: 1px solid var(--autopay-border);
+        border-radius: calc(var(--autopay-radius-shell) + 4px);
+        background: var(--autopay-shell);
+        padding: 28px 24px;
+        text-align: center;
+        box-shadow: 0 24px 48px rgba(15, 23, 42, 0.18);
+    }
+
+    &__loader {
+        width: 44px;
+        height: 44px;
+        margin-bottom: 18px;
+        border: 3px solid color-mix(in srgb, var(--autopay-brand) 18%, transparent);
+        border-top-color: var(--autopay-brand);
+        border-radius: 999px;
+        animation: autopay-hyva-spin 1s linear infinite;
+    }
+
+    &__title {
+        margin: 0 0 8px;
+        color: var(--autopay-text);
+        font-size: 20px;
+        font-weight: 600;
+        line-height: 1.3;
+    }
+
+    &__description {
+        margin: 0;
+        color: var(--autopay-text-muted);
+        font-size: 14px;
+        line-height: 1.6;
+    }
+}
+
+.autopay-hyva-input {
+    width: 100%;
+    border: 1px solid var(--autopay-border);
+    border-radius: var(--autopay-radius-field);
+    background: var(--autopay-surface);
+    padding: 12px 16px;
+    color: var(--autopay-text);
+    outline: 0;
+    transition: border-color 0.2s ease, outline-color 0.2s ease;
+
+    &:focus {
+        border-color: var(--autopay-accent);
+        outline: 2px solid var(--autopay-accent-ring);
+        outline-offset: 0;
+    }
+
+    &--blik {
+        font-size: 18px;
+        letter-spacing: 0.35em;
+    }
+}
+
+.autopay-hyva-gateway-grid {
+    display: grid;
+    gap: 10px;
+    grid-template-columns: minmax(0, 1fr);
+
+    @media (min-width: 640px) {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    @media (min-width: 1200px) {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+}
+
+.autopay-hyva-gateway {
+    position: relative;
+    display: flex;
+    min-height: 136px;
+    width: 100%;
+    cursor: pointer;
+    flex-direction: column;
+    align-items: center;
+    justify-content: space-between;
+    border: 1px solid var(--autopay-border);
+    border-radius: var(--autopay-radius-card);
+    background: var(--autopay-surface);
+    padding: 14px 12px 12px;
+    text-align: center;
+    .autopay-hyva-surface-transition();
+
+    @media (min-width: 768px) {
+        min-height: 148px;
+        padding: 18px 16px 16px;
+    }
+
+    &--idle:hover {
+        border-color: var(--autopay-accent-hover);
+        background: var(--autopay-accent-soft);
+    }
+
+    &--selected {
+        border-color: var(--autopay-accent);
+        background: var(--autopay-accent-soft);
+    }
+
+    &__indicator {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        display: flex;
+        width: 20px;
+        height: 20px;
+        align-items: center;
+        justify-content: center;
+        border: 1px solid var(--autopay-indicator-border);
+        border-radius: 999px;
+        background: var(--autopay-surface);
+        transition: border-color 0.2s ease;
+
+        &--selected {
+            border-color: var(--autopay-accent);
+        }
+    }
+
+    &__indicator-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: var(--autopay-selection-dot);
+        opacity: 0;
+        transition: opacity 0.2s ease;
+
+        &--selected {
+            opacity: 1;
+        }
+    }
+
+    &__logo {
+        display: flex;
+        width: 100%;
+        min-height: 56px;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+    }
+
+    &__logo-image {
+        .autopay-hyva-fit-media(42px);
+    }
+
+    &__fallback {
+        font-size: 12px;
+        font-weight: 600;
+        line-height: 1.3;
+    }
+
+    &__name {
+        display: block;
+        width: 100%;
+        min-height: 40px;
+        margin-top: 8px;
+        font-size: 11px;
+        font-weight: 500;
+        line-height: 1.3;
+
+        @media (min-width: 768px) {
+            font-size: 12px;
+        }
+    }
+}
+
+.autopay-hyva-saved-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.autopay-hyva-saved-card {
+    display: flex;
+    width: 100%;
+    border-radius: var(--autopay-radius-card);
+    .autopay-hyva-surface-transition();
+
+    &--idle:hover {
+        border-color: var(--autopay-accent-hover);
+        background: var(--autopay-accent-soft);
+    }
+
+    &--selected {
+        border-color: var(--autopay-accent);
+        background: var(--autopay-accent-soft);
+    }
+
+    &__input {
+        margin: 0;
+        flex: none;
+    }
+
+    &__logo {
+        display: flex;
+        width: 48px;
+        height: 32px;
+        flex: 0 0 48px;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        border-radius: var(--autopay-radius-badge);
+    }
+
+    &__logo-image {
+        .autopay-hyva-fit-media(24px);
+    }
+
+    &__copy {
+        display: flex;
+        min-width: 0;
+        flex: 1 1 auto;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    &__title {
+        display: block;
+        font-size: 15px;
+        font-weight: 500;
+        line-height: 1.4;
+        overflow-wrap: anywhere;
+    }
+
+    &__description {
+        display: block;
+        color: var(--autopay-text-muted);
+        font-size: 12px;
+        line-height: 18px;
+        overflow-wrap: anywhere;
+    }
+}
+
+.autopay-hyva-agreement {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-top: 16px;
+    border: 1px solid var(--autopay-border);
+    border-radius: var(--autopay-radius-field);
+    background: var(--autopay-surface);
+    padding: 12px 16px;
+    color: var(--autopay-text-soft);
+    font-size: 14px;
+    line-height: 24px;
+
+    &__checkbox {
+        width: 16px;
+        height: 16px;
+        margin-top: 2px;
+        flex: 0 0 16px;
+        accent-color: var(--autopay-accent);
+    }
+}
+
+@keyframes autopay-hyva-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}

@@ -1,0 +1,240 @@
+<?php
+/**
+ * Custom payment method list for Autopay in Hyva Checkout.
+ */
+
+declare(strict_types=1);
+
+use BlueMedia\HyvaPayment\ViewModel\MethodConfigProvider;
+use Hyva\Checkout\Magewire\Checkout\Payment\MethodList as Magewire;
+use Hyva\Checkout\Model\MethodMetaDataInterface;
+use Hyva\Checkout\ViewModel\Checkout\Payment\MethodList as ViewModel;
+use Hyva\Theme\Model\ViewModelRegistry;
+use Magento\Framework\Escaper;
+use Magento\Framework\View\Element\Template;
+use Magento\Payment\Model\MethodInterface as PaymentMethodInterface;
+
+/** @var Template $block */
+/** @var ViewModelRegistry $viewModels */
+/** @var ViewModel $viewModel */
+/** @var PaymentMethodInterface $method */
+/** @var Magewire $magewire */
+/** @var Escaper $escaper */
+/** @var MethodMetaDataInterface $methodMetaData */
+
+$viewModel = $viewModels->require(ViewModel::class);
+$methodConfigProvider = $viewModels->require(MethodConfigProvider::class);
+$methods = $viewModel->getList() ?? [];
+$bluepaymentMethodIndexes = [];
+
+foreach ($methods as $index => $listedMethod) {
+    if ($methodConfigProvider->isAutopayMethod($listedMethod->getCode())) {
+        $bluepaymentMethodIndexes[] = $index;
+    }
+}
+
+$firstBluepaymentIndex = $bluepaymentMethodIndexes[0] ?? null;
+$lastBluepaymentIndex = !empty($bluepaymentMethodIndexes)
+    ? $bluepaymentMethodIndexes[count($bluepaymentMethodIndexes) - 1]
+    : null;
+$hasRenderableHtml = static function (string $html): bool {
+    $htmlWithoutComments = preg_replace('/<!--.*?-->/s', '', $html);
+    $htmlWithoutEmptyAutopayBlocks = preg_replace(
+        '/<div\b[^>]*data-autopay-empty="true"[^>]*>\s*<\/div>/is',
+        '',
+        (string) $htmlWithoutComments
+    );
+
+    return trim((string) $htmlWithoutEmptyAutopayBlocks) !== '';
+};
+?>
+<div id="payment-methods" class="autopay-hyva-methods">
+    <div
+        id="bluepayment-processing-overlay"
+        class="fixed inset-0 z-50 hidden items-center justify-center bg-white/70"
+        aria-hidden="true"
+    >
+        <div class="flex h-14 w-14 items-center justify-center rounded-full bg-white shadow-lg ring-1 ring-slate-200">
+            <div class="h-8 w-8 animate-spin rounded-full border-4 border-slate-200 border-t-primary"></div>
+        </div>
+    </div>
+
+    <?php if ($methods): ?>
+        <div id="payment-method-list" class="space-y-2" data-method="<?= $escaper->escapeHtmlAttr($magewire->method) ?>">
+            <?php foreach ($methods as $index => $method): ?>
+                <?php
+                $methodCode = $method->getCode();
+                $methodBlock = $viewModel->getMethodBlock($block, $method);
+                $methodCodeAttr = $escaper->escapeHtmlAttr($methodCode);
+                $methodMetaData = $viewModel->getMethodMetaData($block, $method);
+                $isAutopayMethod = $methodConfigProvider->isAutopayMethod($methodCode);
+                $canShowMethod = $viewModel->canShowMethod($block, $method, $magewire->method);
+                $isSelectedMethod = $magewire->method === $methodCode;
+                $methodHtml = $isAutopayMethod && $methodBlock ? $methodBlock->toHtml() : '';
+                ?>
+
+                <?php if ($isAutopayMethod): ?>
+                    <?php if ($index === $firstBluepaymentIndex): ?>
+                        <div class="autopay-hyva-header">
+                            <div class="autopay-hyva-header__brand">
+                                <img
+                                    src="<?= $escaper->escapeUrl($block->getViewFileUrl('BlueMedia_BluePayment::images/logo.svg')) ?>"
+                                    alt="<?= $escaper->escapeHtmlAttr(__('Autopay')) ?>"
+                                    class="autopay-hyva-header__logo"
+                                />
+                            </div>
+
+                            <div class="autopay-hyva-header__divider"></div>
+
+                            <div class="autopay-hyva-header__trustmarks">
+                                <img
+                                    src="<?= $escaper->escapeUrl($block->getViewFileUrl('BlueMedia_BluePayment::images/safe-brands.png')) ?>"
+                                    alt="<?= $escaper->escapeHtmlAttr(__('Trusted brands')) ?>"
+                                    class="autopay-hyva-header__trustmarks-image"
+                                />
+                            </div>
+                        </div>
+                    <?php endif; ?>
+
+                    <?php
+                    $methodIconUrl = $methodConfigProvider->getMethodIconUrl($methodCode, $methodBlock);
+                    $methodIconHtml = '';
+                    if (!$methodIconUrl && $methodMetaData->canRenderIcon() && $renderedAutopayIcon = $methodMetaData->renderIcon()) {
+                        $methodIconHtml = $renderedAutopayIcon;
+                    }
+                    $methodDescription = $methodConfigProvider->getMethodDescription($methodCode, $methodBlock);
+                    $isBaseAutopayMethod = $methodCode === 'bluepayment';
+                    $displayTitle = $isBaseAutopayMethod ? (string) __('Internet transfer') : (string) $method->getTitle();
+                    $displayDescription = $isBaseAutopayMethod
+                        ? (string) __('You will be redirected to the page of the selected bank.')
+                        : $methodDescription;
+                    $iconClass = $isBaseAutopayMethod
+                        ? 'autopay-hyva-method__icon autopay-hyva-method__icon--base'
+                        : 'autopay-hyva-method__icon autopay-hyva-method__icon--gateway';
+                    $imageClass = $isBaseAutopayMethod
+                        ? 'autopay-hyva-method__image autopay-hyva-method__image--base'
+                        : 'autopay-hyva-method__image';
+                    ?>
+                    <div
+                        id="payment-method-option-<?= /* @noEscape */ $methodCodeAttr ?>"
+                        class="autopay-hyva-method border-2 rounded-md <?= $isSelectedMethod ? 'active bg-primary bg-opacity-10 border-primary' : 'inactive bg-white' ?>"
+                        wire:key="<?= /* @noEscape */ $methodCodeAttr ?>"
+                        data-payment-method-option="<?= /* @noEscape */ $methodCodeAttr ?>"
+                        data-autopay-method-option="<?= /* @noEscape */ $methodCodeAttr ?>"
+                    >
+                        <label class="autopay-hyva-method__label">
+                            <input
+                                type="radio"
+                                id="payment-method-<?= /* @noEscape */ $methodCodeAttr ?>"
+                                name="payment-method-option"
+                                class="form-radio"
+                                value="<?= /* @noEscape */ $methodCodeAttr ?>"
+                                wire:model="method"
+                                data-payment-method-code="<?= /* @noEscape */ $methodCodeAttr ?>"
+                                data-autopay-method-code="<?= /* @noEscape */ $methodCodeAttr ?>"
+                            >
+
+                            <?php if ($methodIconUrl): ?>
+                                <span class="<?= $escaper->escapeHtmlAttr($iconClass) ?>">
+                                    <img
+                                        src="<?= $escaper->escapeUrl($methodIconUrl) ?>"
+                                        alt="<?= $escaper->escapeHtmlAttr($method->getTitle()) ?>"
+                                        class="<?= $escaper->escapeHtmlAttr($imageClass) ?>"
+                                    />
+                                </span>
+                            <?php elseif ($methodIconHtml !== ''): ?>
+                                <span class="<?= $escaper->escapeHtmlAttr($iconClass) ?>">
+                                    <?= /* @noEscape */ $methodIconHtml ?>
+                                </span>
+                            <?php else: ?>
+                                <span class="autopay-hyva-method__icon-placeholder"></span>
+                            <?php endif; ?>
+
+                            <span class="autopay-hyva-method__body">
+                                <span class="autopay-hyva-method__title">
+                                    <?= $escaper->escapeHtml($displayTitle) ?>
+                                </span>
+
+                                <?php if ($displayDescription !== ''): ?>
+                                    <span class="autopay-hyva-method__description">
+                                        <?= $escaper->escapeHtml($displayDescription) ?>
+                                    </span>
+                                <?php endif; ?>
+                            </span>
+                        </label>
+
+                        <?php if ($hasRenderableHtml($methodHtml)): ?>
+                            <div
+                                id="<?= 'payment-method-view-' . /* @noEscape */ $methodCodeAttr ?>"
+                                class="p-4 pt-0<?= $isSelectedMethod ? '' : ' hidden' ?>"
+                                data-autopay-method-view="<?= /* @noEscape */ $methodCodeAttr ?>"
+                            >
+                                <?= /* @noEscape */ $methodHtml ?>
+                            </div>
+                        <?php endif; ?>
+                    </div>
+
+                    <?php if ($index === $lastBluepaymentIndex): ?>
+                        <div class="autopay-hyva-methods__footer">
+                            <span class="autopay-hyva-methods__footer-line"></span>
+                        </div>
+                    <?php endif; ?>
+                <?php else: ?>
+                    <?php $iconHtml = ''; ?>
+                    <?php if ($methodMetaData->canRenderIcon() && $renderedIcon = $methodMetaData->renderIcon()): ?>
+                        <?php $iconHtml = $renderedIcon; ?>
+                    <?php endif; ?>
+
+                    <div
+                        id="payment-method-option-<?= /* @noEscape */ $methodCodeAttr ?>"
+                        class="border-2 rounded-md <?= $magewire->method === $method->getCode() ? 'active bg-primary bg-opacity-10 border-primary' : 'inactive bg-white' ?>"
+                        wire:key="<?= /* @noEscape */ $methodCodeAttr ?>"
+                        data-payment-method-option="<?= /* @noEscape */ $methodCodeAttr ?>"
+                    >
+                        <label class="flex items-center gap-x-2.5 mb-0 p-4 cursor-pointer">
+                            <input
+                                type="radio"
+                                id="payment-method-<?= /* @noEscape */ $methodCodeAttr ?>"
+                                name="payment-method-option"
+                                class="form-radio"
+                                value="<?= /* @noEscape */ $methodCodeAttr ?>"
+                                wire:model="method"
+                                data-payment-method-code="<?= /* @noEscape */ $methodCodeAttr ?>"
+                            >
+
+                            <span class="flex flex-1 justify-between items-center gap-4">
+                            <span class="text-gray-700 font-medium break-words hyphens-auto">
+                                    <?= $escaper->escapeHtml($method->getTitle()) ?>
+
+                                    <?php if ($methodMetaData->hasSubTitle()): ?>
+                                        <br>
+                                        <?= $escaper->escapeHtml($methodMetaData->getSubTitle()) ?>
+                                    <?php endif ?>
+                                </span>
+
+                                <?php if ($methodMetaData->canRenderIcon() && $iconHtml = $methodMetaData->renderIcon()): ?>
+                                    <span class="autopay-hyva-method__icon autopay-hyva-method__icon--rendered">
+                                        <?= /* @noEscape */ $iconHtml; ?>
+                                    </span>
+                                <?php endif ?>
+                            </span>
+                        </label>
+                        <?php if ($viewModel->canShowMethod($block, $method, $magewire->method)): ?>
+                            <?php $html = $viewModel->getMethodBlock($block, $method)->toHtml() ?>
+
+                            <?php if ($hasRenderableHtml($html)): ?>
+                                <div id="<?= 'payment-method-view-' . /* @noEscape */ $methodCodeAttr ?>" class="p-4 pt-0">
+                                    <?= /* @noEscape */ $html ?>
+                                </div>
+                            <?php endif ?>
+                        <?php endif ?>
+                    </div>
+                <?php endif; ?>
+            <?php endforeach ?>
+        </div>
+    <?php else: ?>
+        <div class="message warning">
+            <?= $escaper->escapeHtml(__('No Payment method available.')) ?>
+        </div>
+    <?php endif ?>
+</div>

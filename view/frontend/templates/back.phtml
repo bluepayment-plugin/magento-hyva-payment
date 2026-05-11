@@ -1,0 +1,154 @@
+<?php
+/** @noinspection PhpFullyQualifiedNameUsageInspection */
+/** @var \BlueMedia\BluePayment\Block\Processing\Back $block */
+
+$status = (string) $block->getOrderStatus();
+$isPending = !$block->hasError() && $status !== 'SUCCESS' && $status !== 'FAILURE';
+$pendingImageUrl = $block->getViewFileUrl('BlueMedia_BluePayment::images/pending.png');
+$paymentStatusUrl = $block->getUrl('bluepayment/processing/paymentstatus');
+$backUrl = $block->getUrl('bluepayment/processing/back');
+?>
+
+<?php if ($block->hasError()): ?>
+    <div class="mx-auto max-w-4xl px-4 py-10 md:px-6 md:py-16">
+        <div class="rounded-2xl border border-red-200 bg-red-50 px-6 py-5 text-red-800 shadow-sm">
+            <p class="text-base font-semibold md:text-lg">
+                <?= $block->escapeHtml(__('There was a problem with your request.')) ?>
+            </p>
+        </div>
+    </div>
+<?php elseif ($isPending): ?>
+    <div
+        class="mx-auto max-w-5xl px-4 py-10 md:px-6 md:py-16"
+    >
+        <div class="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+            <div class="grid gap-0 md:grid-cols-[240px_minmax(0,1fr)]">
+                <div class="flex items-center justify-center p-8 md:p-10">
+                    <img
+                        src="<?= $block->escapeUrl($pendingImageUrl) ?>"
+                        alt=""
+                        class="h-auto w-full max-w-[180px]"
+                    />
+                </div>
+
+                <div class="p-6 md:p-10">
+                    <?php if ($block->isMultishipping()): ?>
+                        <h1 class="text-2xl font-semibold tracking-tight text-slate-900 md:text-4xl">
+                            <?= $block->escapeHtml(__('Orders accepted - transaction status:')) ?>
+                            <span class="font-bold"><?= $block->escapeHtml(__('pending verification')) ?></span>.
+                        </h1>
+
+                        <div class="mt-6 space-y-4 text-base leading-7 text-slate-700 md:text-xl md:leading-9">
+                            <p>
+                                <?= $block->escapeHtml(__('Your orders have been accepted - we are waiting for payment.')) ?><br>
+                                <?= $block->escapeHtml(__('As soon as we receive confirmation - the orders will be forwarded for fulfillment.')) ?>
+                            </p>
+
+                            <div>
+                                <p class="font-medium text-slate-900"><?= $block->escapeHtml(__('Order numbers:')) ?></p>
+                                <div class="mt-3 flex flex-wrap gap-3">
+                                    <?php foreach ($block->getOrders() as $order): ?>
+                                        <a
+                                            href="<?= $block->escapeUrl($block->getViewOrderUrl($order->getId())) ?>"
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            class="inline-flex items-center rounded-full border border-slate-300 bg-white px-4 py-2 font-semibold text-slate-900 transition hover:border-slate-400 hover:bg-slate-50"
+                                        >
+                                            <?= $block->escapeHtml($order->getIncrementId()) ?>
+                                        </a>
+                                    <?php endforeach; ?>
+                                </div>
+                            </div>
+                        </div>
+                    <?php else: ?>
+                        <h1 class="text-2xl font-semibold tracking-tight text-slate-900 md:text-4xl">
+                            <?= $block->escapeHtml(__('Order accepted - transaction status:')) ?>
+                            <span class="font-bold"><?= $block->escapeHtml(__('pending verification')) ?></span>.
+                        </h1>
+
+                        <div class="mt-6 space-y-4 text-base leading-7 text-slate-700 md:text-xl md:leading-9">
+                            <p>
+                                <?= $block->escapeHtml(__('Your order has been accepted - we are waiting for payment.')) ?><br>
+                                <?= $block->escapeHtml(__('As soon as we receive confirmation - the order will be forwarded for fulfillment.')) ?>
+                            </p>
+
+                            <p class="text-slate-900">
+                                <?= $block->escapeHtml(__('Order number:')) ?>
+                                <strong><?= $block->escapeHtml((string) $block->getOrderId()) ?></strong>
+                            </p>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        (() => {
+            const config = {
+                status: '<?= $block->escapeJs($status) ?>',
+                orderId: '<?= $block->escapeJs((string) $block->getOrderId()) ?>',
+                serviceId: '<?= $block->escapeJs((string) $block->getServiceId()) ?>',
+                hash: '<?= $block->escapeJs((string) $block->getHash()) ?>',
+                paymentStatusUrl: '<?= $block->escapeJs($paymentStatusUrl) ?>',
+                backUrl: '<?= $block->escapeJs($backUrl) ?>'
+            };
+
+            const redirectToBack = (params) => {
+                const url = new URL(config.backUrl, window.location.origin);
+                url.searchParams.set('ServiceID', params.ServiceID);
+                url.searchParams.set('OrderID', params.OrderID);
+                url.searchParams.set('Hash', params.hash);
+                window.location.href = url.toString();
+            };
+
+            const scheduleNextCheck = () => {
+                window.setTimeout(updateStatus, 2000);
+            };
+
+            const handleStatus = (response) => {
+                if (!response || typeof response !== 'object') {
+                    scheduleNextCheck();
+                    return;
+                }
+
+                if (response.Status === 'SUCCESS' || response.Status === 'FAILURE') {
+                    redirectToBack(response);
+                    return;
+                }
+
+                scheduleNextCheck();
+            };
+
+            const updateStatus = async () => {
+                const url = new URL(config.paymentStatusUrl, window.location.origin);
+                url.searchParams.set('ServiceID', config.serviceId);
+                url.searchParams.set('OrderID', config.orderId);
+                url.searchParams.set('Hash', config.hash);
+
+                try {
+                    const response = await fetch(url.toString(), {
+                        method: 'GET',
+                        credentials: 'same-origin',
+                        headers: {
+                            'X-Requested-With': 'XMLHttpRequest'
+                        }
+                    });
+
+                    if (!response.ok) {
+                        scheduleNextCheck();
+                        return;
+                    }
+
+                    handleStatus(await response.json());
+                } catch (error) {
+                    scheduleNextCheck();
+                }
+            };
+
+            if (config.status !== 'SUCCESS' && config.status !== 'FAILURE') {
+                updateStatus();
+            }
+        })();
+    </script>
+<?php endif; ?>

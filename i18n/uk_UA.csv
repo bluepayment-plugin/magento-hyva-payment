@@ -1,0 +1,7 @@
+Please select a payment channel.,"Будь ласка, виберіть платіжний канал."
+Override Hyvä payment list template,Перевизначити шаблон списку платежів Hyvä
+Enable to replace Hyvä payment method list rendering with the Zen custom template.,"Увімкніть, щоб замінити відображення списку платіжних методів Hyvä на користувацький шаблон Zen."
+Card payment failed. Please try again.,"Оплата карткою не вдалася. Будь ласка, спробуйте ще раз."
+Cart payment has been cancelled.,Оплату кошика було скасовано.
+Card payment successful.,Оплата карткою пройшла успішно.
+Card payment failed.,Оплата карткою не вдалася.

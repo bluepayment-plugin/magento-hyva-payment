@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<page xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:noNamespaceSchemaLocation="urn:magento:framework:View/Layout/etc/page_configuration.xsd">
+    <body>
+        <referenceBlock name="checkout.payment.methods">
+            <block name="checkout.payment.method.bluepayment"
+                   as="bluepayment"
+                   template="BlueMedia_HyvaPayment::component/payment/method/bluepayment.phtml"
+                   cacheable="false">
+                <arguments>
+                    <argument name="magewire" xsi:type="object">BlueMedia\HyvaPayment\Magewire\Payment\Method\BluePayment</argument>
+                    <argument name="payment_method_code" xsi:type="string">bluepayment</argument>
+                    <argument name="metadata" xsi:type="array">
+                        <item name="icon" xsi:type="array">
+                            <item name="src" xsi:type="string">BlueMedia_BluePayment::images/logo.svg</item>
+                            <item name="attributes" xsi:type="array">
+                                <item name="alt" xsi:type="string">Autopay</item>
+                                <item name="width" xsi:type="string">42</item>
+                                <item name="height" xsi:type="string">42</item>
+                            </item>
+                        </item>
+                        <item name="subtitle" xsi:type="string">Autopay</item>
+                    </argument>
+                </arguments>
+            </block>
+
+            <block name="checkout.payment.method.bluepayment.separated.template"
+                   as="bluepayment_separated_template"
+                   template="BlueMedia_HyvaPayment::component/payment/method/bluepayment.phtml"
+                   cacheable="false">
+                <arguments>
+                    <argument name="magewire" xsi:type="object">BlueMedia\HyvaPayment\Magewire\Payment\Method\BluePayment</argument>
+                </arguments>
+            </block>
+        </referenceBlock>
+    </body>
+</page>

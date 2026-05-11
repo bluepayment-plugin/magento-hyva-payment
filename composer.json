@@ -1,0 +1,20 @@
+{
+    "name": "bluepayment-plugin/magento-hyva-autopay",
+    "description": "Hyva Checkout compatibility for the BlueMedia Autopay payment module",
+    "type": "magento2-module",
+    "version": "1.0.0",
+    "require": {
+        "magento/framework": "*"
+    },
+    "license": [
+        "LGPL-2.1-or-later"
+    ],
+    "autoload": {
+        "files": [
+            "registration.php"
+        ],
+        "psr-4": {
+            "BlueMedia\\HyvaPayment\\": ""
+        }
+    }
+}

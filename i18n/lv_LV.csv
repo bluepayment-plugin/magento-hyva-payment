@@ -1,0 +1,7 @@
+Please select a payment channel.,"Lūdzu, izvēlieties maksājumu kanālu."
+Override Hyvä payment list template,Pārrakstīt Hyvä maksājumu saraksta veidni
+Enable to replace Hyvä payment method list rendering with the Zen custom template.,"Iespējojiet, lai Hyvä maksājumu metožu sarakstu aizstātu ar Zen pielāgoto veidni."
+Card payment failed. Please try again.,"Maksājums ar karti neizdevās. Lūdzu, mēģiniet vēlreiz."
+Cart payment has been cancelled.,Grozā maksājums tika atcelts.
+Card payment successful.,Maksājums ar karti izdevās.
+Card payment failed.,Maksājums ar karti neizdevās.

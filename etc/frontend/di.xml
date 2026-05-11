@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="urn:magento:framework:ObjectManager/etc/config.xsd">
+    <type name="Hyva\CompatModuleFallback\Model\CompatModuleRegistry">
+        <arguments>
+            <argument name="compatModules" xsi:type="array">
+                <item name="bluepayment" xsi:type="array">
+                    <item name="original_module" xsi:type="string">BlueMedia_BluePayment</item>
+                    <item name="compat_module" xsi:type="string">BlueMedia_HyvaPayment</item>
+                </item>
+            </argument>
+        </arguments>
+    </type>
+    <type name="Hyva\Checkout\Model\Magewire\Payment\PlaceOrderServiceProvider">
+        <arguments>
+            <argument name="placeOrderServiceList" xsi:type="array">
+                <item name="bluepayment" xsi:type="object">BlueMedia\HyvaPayment\Magewire\Payment\PlaceOrderService</item>
+            </argument>
+        </arguments>
+    </type>
+    <type name="Hyva\Checkout\ViewModel\Checkout\Payment\MethodList">
+        <plugin name="bluemedia_hyva_filter_payment_methods"
+                type="BlueMedia\HyvaPayment\Plugin\FilterPaymentMethodsPlugin" />
+    </type>
+    <type name="Hyva\Checkout\Magewire\Checkout\Payment\MethodList">
+        <plugin name="bluemedia_hyva_normalize_method_list_state"
+                type="BlueMedia\HyvaPayment\Plugin\NormalizeMethodListStatePlugin" />
+    </type>
+    <type name="Hyva\Checkout\Model\MethodMetaData\IconRenderer">
+        <plugin name="bluemedia_hyva_allow_external_method_icons"
+                type="BlueMedia\HyvaPayment\Plugin\AllowExternalMethodIconsPlugin" />
+    </type>
+</config>

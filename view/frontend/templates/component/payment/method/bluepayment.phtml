@@ -1,0 +1,210 @@
+<?php
+
+declare(strict_types=1);
+
+use BlueMedia\HyvaPayment\Magewire\Payment\Method\BluePayment as MagewireComponent;
+use BlueMedia\HyvaPayment\ViewModel\MethodConfigProvider;
+use Hyva\Theme\Model\ViewModelRegistry;
+use Magento\Framework\Escaper;
+use Magento\Framework\View\Element\Template;
+
+/** @var Template $block */
+/** @var Escaper $escaper */
+/** @var MagewireComponent $magewire */
+/** @var ViewModelRegistry $viewModels */
+
+$magewire = $block->getData('magewire');
+$methodConfigProvider = $viewModels->require(MethodConfigProvider::class);
+$viewData = $methodConfigProvider->getBluepaymentTemplateData($magewire);
+$config = $viewData['config'];
+$gateways = $viewData['gateways'];
+$gateway = $viewData['gateway'];
+$ui = $viewData['ui'];
+$state = $viewData['state'];
+$modalCssVariables = implode(' ', [
+    '--autopay-accent: var(--autopay-template-accent, var(--color-primary, currentColor));',
+    '--autopay-brand: var(--autopay-template-brand, #199BFA);',
+    '--autopay-shell: var(--autopay-template-shell, var(--color-surface, #ffffff));',
+    '--autopay-border: var(--autopay-template-border, var(--form-stroke, color-mix(in srgb, var(--autopay-accent) 16%, transparent)));',
+    '--autopay-text: var(--autopay-template-text, var(--card-color, var(--color-fg, currentColor)));',
+    '--autopay-text-muted: var(--autopay-template-text-muted, var(--color-fg-secondary, color-mix(in srgb, var(--autopay-text) 72%, var(--autopay-shell))));',
+    '--autopay-radius-shell: var(--autopay-template-radius-shell, var(--radius-md, 0.375rem));',
+]);
+?>
+<div
+    class="autopay-hyva-component<?= $state['has_visible_content'] ? '' : ' autopay-hyva-component--empty' ?>"
+    x-data="bluepaymentMethod"
+    data-bluepayment-config="<?= $escaper->escapeHtmlAttr((string) $ui['config_json']) ?>"
+    data-bluepayment-method-code="<?= $escaper->escapeHtmlAttr($ui['method_code']) ?>"
+    data-bluepayment-widget-frame="<?= $escaper->escapeHtmlAttr($ui['iframe_id']) ?>"
+    data-selected-gateway-id="<?= $state['selected_gateway_id'] !== null ? $escaper->escapeHtmlAttr((string) $state['selected_gateway_id']) : '' ?>"
+    data-selected-card-index="<?= $state['selected_card_index'] !== null ? $escaper->escapeHtmlAttr((string) $state['selected_card_index']) : '' ?>"
+    <?php if (!$state['has_visible_content']): ?>data-autopay-empty="true"<?php endif; ?>
+    wire:ignore
+>
+    <?php if ($state['has_visible_content']): ?>
+        <?php if ($state['requires_gateway_selection']): ?>
+            <div class="autopay-hyva-gateway-grid">
+                <?php foreach ($gateways as $gatewayOption): ?>
+                    <?php
+                    $gatewayOptionId = (int) ($gatewayOption['gateway_id'] ?? 0);
+                    $gatewayLogoUrl = $methodConfigProvider->resolveGatewayIcon($gatewayOption);
+                    $isSelectedGateway = $state['selected_gateway_id'] !== null
+                        && $state['selected_gateway_id'] === $gatewayOptionId;
+                    ?>
+                    <button
+                        type="button"
+                        class="autopay-hyva-gateway <?= $isSelectedGateway ? 'autopay-hyva-gateway--selected' : 'autopay-hyva-gateway--idle' ?>"
+                        data-gateway-id="<?= $gatewayOptionId ?>"
+                        aria-pressed="<?= $isSelectedGateway ? 'true' : 'false' ?>"
+                    >
+                        <span
+                            class="autopay-hyva-gateway__indicator<?= $isSelectedGateway ? ' autopay-hyva-gateway__indicator--selected' : '' ?>"
+                        >
+                            <span
+                                class="autopay-hyva-gateway__indicator-dot<?= $isSelectedGateway ? ' autopay-hyva-gateway__indicator-dot--selected' : '' ?>"
+                            ></span>
+                        </span>
+
+                        <span class="autopay-hyva-gateway__logo">
+                            <?php if ($gatewayLogoUrl): ?>
+                                <img
+                                    src="<?= $escaper->escapeUrl($gatewayLogoUrl) ?>"
+                                    alt="<?= $escaper->escapeHtmlAttr((string) ($gatewayOption['name'] ?? 'Autopay')) ?>"
+                                    class="autopay-hyva-gateway__logo-image"
+                                />
+                            <?php else: ?>
+                                <span class="autopay-hyva-gateway__fallback">
+                                    <?= $escaper->escapeHtml((string) ($gatewayOption['name'] ?? 'Autopay')) ?>
+                                </span>
+                            <?php endif; ?>
+                        </span>
+
+                        <span class="autopay-hyva-gateway__name">
+                            <?= $escaper->escapeHtml((string) ($gatewayOption['name'] ?? 'Autopay')) ?>
+                        </span>
+                    </button>
+                <?php endforeach; ?>
+            </div>
+        <?php elseif ($state['has_gateway_description']): ?>
+            <div class="autopay-hyva-panel autopay-hyva-panel--muted autopay-hyva-panel--copy">
+                <?= /* @noEscape */ $gateway['description'] ?>
+            </div>
+        <?php endif; ?>
+
+        <div x-show="isBlikCodeVisible" x-cloak>
+            <label class="autopay-hyva-panel__field" for="<?= $escaper->escapeHtmlAttr($ui['blik_input_id']) ?>">
+                <span class="autopay-hyva-panel__field-label"><?= $escaper->escapeHtml(__('Enter BLIK code')) ?></span>
+                <input
+                    id="<?= $escaper->escapeHtmlAttr($ui['blik_input_id']) ?>"
+                    type="tel"
+                    inputmode="numeric"
+                    maxlength="6"
+                    placeholder="000000"
+                    class="autopay-hyva-input autopay-hyva-input--blik"
+                    value="<?= $escaper->escapeHtmlAttr((string) ($config['blik_code'] ?? '')) ?>"
+                    x-bind:value="blikCode"
+                    x-on:input="handleBlikInput"
+                />
+            </label>
+        </div>
+
+        <div x-show="isSavedCardsVisible" x-cloak>
+            <div class="autopay-hyva-saved-cards">
+                <template x-for="card in cards" :key="card.index">
+                    <div
+                        class="autopay-hyva-saved-card border-2 rounded-md"
+                        data-card-index=""
+                        x-bind:data-card-index="card.index"
+                        x-bind:class="card.itemClass"
+                    >
+                        <label class="flex items-center gap-x-2.5 mb-0 p-4 cursor-pointer">
+                            <input
+                                type="radio"
+                                name="<?= $escaper->escapeHtmlAttr($ui['card_input_name']) ?>"
+                                class="form-radio autopay-hyva-saved-card__input"
+                                :value="card.index"
+                                x-bind:checked="card.selected"
+                                x-on:change="handleCardSelection"
+                            />
+
+                            <span class="flex flex-1 items-center justify-between gap-4">
+                                <span class="flex min-w-0 items-center gap-3">
+                                    <span class="autopay-hyva-saved-card__logo">
+                                        <img :src="card.logo" :alt="card.number" class="autopay-hyva-saved-card__logo-image" />
+                                    </span>
+
+                                    <span class="autopay-hyva-saved-card__copy">
+                                        <span
+                                            class="autopay-hyva-saved-card__title text-gray-700 font-medium break-words hyphens-auto"
+                                            x-text="card.number"
+                                        ></span>
+                                        <span
+                                            class="autopay-hyva-saved-card__description"
+                                            x-text="card.description"
+                                        ></span>
+                                    </span>
+                                </span>
+                            </span>
+                        </label>
+                    </div>
+                </template>
+            </div>
+
+            <label
+                x-show="isOneClickAgreementVisible"
+                x-cloak
+                class="autopay-hyva-agreement"
+            >
+                <input
+                    type="checkbox"
+                    class="autopay-hyva-agreement__checkbox"
+                    <?php if ($state['accepted_one_click_agreement']): ?>checked<?php endif; ?>
+                    x-bind:checked="acceptedOneClickAgreement"
+                    x-on:change="handleOneClickAgreementChange"
+                />
+                <span x-text="oneClickAgreementText"></span>
+            </label>
+        </div>
+
+        <div x-show="isWidgetFrameVisible" x-cloak class="autopay-hyva-panel autopay-hyva-panel--muted">
+            <div class="autopay-hyva-widget">
+                <iframe
+                    id="<?= $escaper->escapeHtmlAttr($ui['iframe_id']) ?>"
+                    title="Autopay Card Widget"
+                    class="autopay-hyva-widget__frame"
+                ></iframe>
+            </div>
+        </div>
+
+        <template x-teleport="body">
+            <div
+                x-show="isBlikConfirmationVisible"
+                x-cloak
+                class="autopay-hyva-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="<?= $escaper->escapeHtmlAttr($ui['blik_input_id'] . '-modal-title') ?>"
+                aria-describedby="<?= $escaper->escapeHtmlAttr($ui['blik_input_id'] . '-modal-description') ?>"
+                style="<?= $escaper->escapeHtmlAttr($modalCssVariables) ?>"
+            >
+                <div class="autopay-hyva-modal__backdrop" aria-hidden="true"></div>
+                <div class="autopay-hyva-modal__dialog">
+                    <div class="autopay-hyva-modal__loader" aria-hidden="true"></div>
+                    <h3
+                        id="<?= $escaper->escapeHtmlAttr($ui['blik_input_id'] . '-modal-title') ?>"
+                        class="autopay-hyva-modal__title"
+                    >
+                        <?= $escaper->escapeHtml(__('Confirm BLIK transaction')) ?>
+                    </h3>
+                    <p
+                        id="<?= $escaper->escapeHtmlAttr($ui['blik_input_id'] . '-modal-description') ?>"
+                        class="autopay-hyva-modal__description"
+                    >
+                        <?= $escaper->escapeHtml(__("Confirm the payment in your bank's app.")) ?>
+                    </p>
+                </div>
+            </div>
+        </template>
+    <?php endif; ?>
+</div>

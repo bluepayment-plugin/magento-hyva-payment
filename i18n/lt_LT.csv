@@ -1,0 +1,7 @@
+Please select a payment channel.,Pasirinkite mokėjimo kanalą.
+Override Hyvä payment list template,Perrašyti Hyvä mokėjimų sąrašo šabloną
+Enable to replace Hyvä payment method list rendering with the Zen custom template.,"Įjungti, kad Hyvä mokėjimų sąrašą pakeistų Zen tinkintas šablonas."
+Card payment failed. Please try again.,Mokėjimas kortele nepavyko. Bandykite dar kartą.
+Cart payment has been cancelled.,Krepšelio mokėjimas buvo atšauktas.
+Card payment successful.,Mokėjimas kortele sėkmingas.
+Card payment failed.,Mokėjimas kortele nepavyko.
