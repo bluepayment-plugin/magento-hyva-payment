@@ -15,9 +15,9 @@ Moduł nie zastępuje `BlueMedia_BluePayment`. Moduł bazowy nadal odpowiada za 
 
 ### Tabela kompatybilności
 
-| BlueMedia_HyvaPayment | Wymagany moduł bazowy BlueMedia_BluePayment | Magento                 | PHP                     | Uwagi                                 |
-|-----------------------|---------------------------------------------|-------------------------|-------------------------|---------------------------------------|
-| 1.0.0                 | 2.33.0 lub nowszy                           | Jak dla modułu bazowego | Jak dla modułu bazowego | Pierwsza wersja modułu Hyvä Checkout. |
+| Pakiet Composer | Moduł Magento | Wymagany moduł bazowy BlueMedia_BluePayment | Magento | PHP | Uwagi |
+|-----------------|----------------|---------------------------------------------|---------|-----|-------|
+| `bluepayment-plugin/magento-hyva-autopay` 1.0.0 | `BlueMedia_HyvaPayment` | 2.33.0 lub nowszy | Jak dla modułu bazowego | Jak dla modułu bazowego | Pierwsza wersja modułu Hyvä Checkout. |
 
 Moduł Hyvä powinien być aktualizowany razem z modułem bazowym. Jeżeli instalujesz nowszą wersję `BlueMedia_BluePayment`, użyj najnowszej dostępnej wersji `BlueMedia_HyvaPayment`.
 
@@ -30,7 +30,7 @@ Lista zmian znajduje się w [CHANGELOG.md](CHANGELOG.md).
 Zainstaluj moduł poleceniem:
 
 ```bash
-composer require bluemedia/magento-hyva-autopay
+composer require bluepayment-plugin/magento-hyva-autopay
 ```
 
 Następnie przejdź do [aktywacji modułu](#aktywacja-modułu).
