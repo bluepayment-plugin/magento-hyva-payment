@@ -13,6 +13,14 @@ Moduł nie zastępuje `BlueMedia_BluePayment`. Moduł bazowy nadal odpowiada za 
   - `Hyva_CompatModuleFallback`.
 - Zgodna wersja PHP i Magento taka sama jak dla modułu bazowego.
 
+### Tabela kompatybilności
+
+| BlueMedia_HyvaPayment | Wymagany moduł bazowy BlueMedia_BluePayment | Magento                 | PHP                     | Uwagi                                 |
+|-----------------------|---------------------------------------------|-------------------------|-------------------------|---------------------------------------|
+| 1.0.0                 | 2.33.0 lub nowszy                           | Jak dla modułu bazowego | Jak dla modułu bazowego | Pierwsza wersja modułu Hyvä Checkout. |
+
+Moduł Hyvä powinien być aktualizowany razem z modułem bazowym. Jeżeli instalujesz nowszą wersję `BlueMedia_BluePayment`, użyj najnowszej dostępnej wersji `BlueMedia_HyvaPayment`.
+
 ### Co nowego
 Lista zmian znajduje się w [CHANGELOG.md](CHANGELOG.md).
 
